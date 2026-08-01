@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Markdown 渲染层:拼装五大板块,每数值附 (来源:XX),文末加免责声明。
+"""Markdown 渲染层:五大板块,每板块=数据表+叙事块,数值附 (来源:XX),文末免责声明。
 
 所有格式化均对 None/缺失做降级处理为"数据暂缺",绝不填默认值。
+叙事块优先用 LLM 生成的 narrative;无 narrative 时回退规则版 interp。
 """
 from __future__ import annotations
 
@@ -41,39 +42,71 @@ def _line(label: str, value: str, source: str) -> str:
     return f"- {label}:{value}（来源：{source}）" if source else f"- {label}:{value}"
 
 
-def _pair(label: str, value: str, source: str) -> str:
-    return _line(label, value, source)
+def _yi(v) -> str:
+    """元 → 亿元展示;None → 数据暂缺。"""
+    if v is None:
+        return base.MISSING
+    try:
+        return f"{float(v) / 1e8:,.2f}亿元"
+    except (TypeError, ValueError):
+        return base.MISSING
 
 
-def _section_overview(data: dict, interp: dict) -> list[str]:
+def _table(headers: list[str], rows: list[list[str]]) -> list[str]:
+    """生成 Markdown 表格;rows 为空时返回数据暂缺提示行。"""
+    if not rows:
+        return ["> 表格数据暂缺"]
+    out = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for r in rows:
+        out.append("| " + " | ".join(str(c) for c in r) + " |")
+    return out
+
+
+def _narrative_block(narrative: dict, section: str, fallback_lines: list[str]) -> list[str]:
+    """有 LLM 叙事则用叙事(空行隔开),否则回退规则版 fallback_lines。"""
+    nar = (narrative or {}).get(section)
+    if nar:
+        return ["", nar]
+    return fallback_lines
+
+
+# ---------------------------------------------------------------------------
+# 一、昨夜今晨概览
+# ---------------------------------------------------------------------------
+def _section_overview(data: dict, interp: dict, narrative: dict) -> list[str]:
     ov = data.get("overview", {})
-    lines = [T.SECTION_OVERVIEW]
     dow, nas, sp = ov.get("dow", {}), ov.get("nasdaq", {}), ov.get("sp500", {})
-    lines.append(_line(
-        "美股",
-        f"道指 {_pct(dow)}（{_num(dow, 'close', 0, '点')}）、纳指 {_pct(nas)}、标普500 {_pct(sp)}",
-        _src(dow) or _src(nas),
-    ))
     u10 = ov.get("us10y", {})
-    u10y_v = _num(u10, "yield", 2, "%")
-    u10y_c = _bp(u10, "change_bp")
-    u10y_txt = f"{u10y_v}（{u10y_c}）" if u10y_v != base.MISSING else base.MISSING
-    lines.append(_line("美债10Y收益率", u10y_txt, _src(u10)))
     a50, oil, gold = ov.get("a50", {}), ov.get("oil", {}), ov.get("gold", {})
-    lines.append(_line("外盘期货", f"富时A50 {_pct(a50)}、原油 {_pct(oil)}、黄金 {_pct(gold)}", _src(a50)))
-    lines.append(f"{T.LABEL_OPENING}:{interp.get('opening_call', '')}")
+    rows = [
+        ["道指", _pct(dow), _num(dow, "close", 0, "点"), _src(dow)],
+        ["纳指", _pct(nas), _num(nas, "close", 0, "点"), _src(nas)],
+        ["标普500", _pct(sp), _num(sp, "close", 0, "点"), _src(sp)],
+        ["美债10Y", _bp(u10, "change_bp"), _num(u10, "yield", 2, "%"), _src(u10)],
+        ["富时A50", _pct(a50), _num(a50, "close", 0, ""), _src(a50)],
+        ["原油", _pct(oil), _num(oil, "close", 2, ""), _src(oil)],
+        ["黄金", _pct(gold), _num(gold, "close", 2, ""), _src(gold)],
+    ]
+    lines = [T.SECTION_OVERVIEW, *_table(["品种", "涨跌", "数值", "来源"], rows)]
+    fallback = [f"{T.LABEL_OPENING}:{interp.get('opening_call', '')}"]
+    lines += _narrative_block(narrative, "overview", fallback)
     return lines
 
 
-def _section_equity(data: dict, interp: dict) -> list[str]:
+# ---------------------------------------------------------------------------
+# 二、A股大盘温度
+# ---------------------------------------------------------------------------
+def _section_equity(data: dict, interp: dict, narrative: dict) -> list[str]:
     eq = data.get("equity", {})
     hs, zz = eq.get("hs300", {}), eq.get("zz1000", {})
-    lines = [T.SECTION_EQUITY]
-    lines.append(_line(
-        "核心指数",
-        f"沪深300 {_pct(hs)}（{_num(hs, 'close', 0, '点')}）、中证1000 {_pct(zz)}（{_num(zz, 'close', 0, '点')}）",
-        _src(hs),
-    ))
+    rows = [
+        ["沪深300", _pct(hs), _num(hs, "close", 0, "点"), _src(hs)],
+        ["中证1000", _pct(zz), _num(zz, "close", 0, "点"), _src(zz)],
+    ]
+    lines = [T.SECTION_EQUITY, *_table(["指数", "昨日涨跌", "收盘", "来源"], rows)]
     tv = eq.get("turnover", {})
     vol_str = base.yuan_billion(tv.get("value")) if isinstance(tv, dict) else base.MISSING
     chg_str = base.pct(tv.get("change_pct")) if isinstance(tv, dict) else base.MISSING
@@ -84,80 +117,107 @@ def _section_equity(data: dict, interp: dict) -> list[str]:
     ad_txt = f"涨 {adv} / 跌 {dec}" if (adv is not None and dec is not None) else base.MISSING
     lines.append(_line("涨跌家数", ad_txt, _src(ad)))
     lines.append(_line("风格偏向", eq.get("style", base.MISSING), eq.get("style_source", "")))
-    lines.append(f"{T.LABEL_INTERPRET}:{interp.get('market_temperature', '')}")
+    fallback = [f"{T.LABEL_INTERPRET}:{interp.get('market_temperature', '')}"]
+    lines += _narrative_block(narrative, "equity", fallback)
     return lines
 
 
-def _section_etf(data: dict, interp: dict) -> list[str]:
+# ---------------------------------------------------------------------------
+# 三、ETF焦点
+# ---------------------------------------------------------------------------
+def _etf_group_table(items: list[dict]) -> list[str]:
+    rows = []
+    for it in items:
+        prem = it.get("premium")
+        prem_s = f"{prem:+.2f}%" if prem is not None else base.MISSING
+        rows.append([
+            it.get("name", ""),
+            base.pct(it.get("pct")),
+            base.pct(it.get("pct_5d")),
+            prem_s,
+            _yi(it.get("net_flow")),
+            _yi(it.get("scale")),
+            it.get("source", ""),
+        ])
+    return _table(["品种", "昨日涨跌", "5日涨跌", "当前溢价率", "当日资金净流入", "规模", "来源"], rows)
+
+
+def _section_etf(data: dict, interp: dict, narrative: dict) -> list[str]:
     etf = data.get("etf", {})
     lines = [T.SECTION_ETF]
     for gname, items in etf.get("groups", {}).items():
-        parts = []
-        for it in items:
-            p = base.pct(it.get("pct"))
-            prem = it.get("premium")
-            prem_s = f"（溢价{prem:+.2f}%）" if prem is not None else ""
-            parts.append(f"{it.get('name', '')}{p}{prem_s}")
-        lines.append(_line(gname, "、".join(parts) if parts else base.MISSING, etf.get("source", "")))
-    lines.append(_line("资金流向", interp.get("etf_flow_note", ""), etf.get("source", "")))
-    lines.append(_line("溢价提示", interp.get("etf_premium_note", ""), etf.get("source", "")))
+        lines.append(f"**{gname}**")
+        lines += _etf_group_table(items)
+        lines.append("")
+    fallback = [
+        _line("资金流向", interp.get("etf_flow_note", ""), etf.get("source", "")),
+        _line("溢价提示", interp.get("etf_premium_note", ""), etf.get("source", "")),
+    ]
+    lines += _narrative_block(narrative, "etf", fallback)
     return lines
 
 
-def _section_bond(data: dict, interp: dict) -> list[str]:
+# ---------------------------------------------------------------------------
+# 四、债券市场
+# ---------------------------------------------------------------------------
+def _section_bond(data: dict, interp: dict, narrative: dict) -> list[str]:
     bd = data.get("bond", {})
     gov = bd.get("gov", {})
-    lines = [T.SECTION_BOND]
     spread = bd.get("term_spread")
     spread_s = f"{spread:.2f}%" if spread is not None else base.MISSING
-    lines.append(_line(
-        "国债收益率",
-        f"10Y {_num(gov, 'cn10y', 2, '%')}（{_bp(gov, 'cn10y_chg_bp')}）、"
-        f"1Y {_num(gov, 'cn1y', 2, '%')}（{_bp(gov, 'cn1y_chg_bp')}）、期限利差 {spread_s}",
-        _src(gov),
-    ))
     dr = bd.get("shibor", {})
-    lines.append(_line("Shibor 1周", f"{_num(dr, 'rate', 2, '%')}（{_bp(dr, 'change_bp')}）", _src(dr)))
-    betfs = bd.get("bond_etfs", [])
-    if betfs:
-        parts = [f"{b.get('name', '')}{base.pct(b.get('pct'))}" for b in betfs]
-        lines.append(_line("国债ETF", "、".join(parts), betfs[0].get("source", "")))
-    lines.append(f"{T.LABEL_INTERPRET}:{interp.get('bond_view', '')}")
-    lines.append(f"{T.LABEL_REFERENCE}:{interp.get('bond_reference', '')}")
+    rows = [
+        ["国债10Y", _num(gov, "cn10y", 2, "%"), _bp(gov, "cn10y_chg_bp"), _src(gov)],
+        ["国债1Y", _num(gov, "cn1y", 2, "%"), _bp(gov, "cn1y_chg_bp"), _src(gov)],
+        ["期限利差", spread_s, "—", bd.get("term_spread_source", "")],
+        ["Shibor 1周", _num(dr, "rate", 2, "%"), _bp(dr, "change_bp"), _src(dr)],
+    ]
+    for b in bd.get("bond_etfs", []):
+        rows.append([b.get("name", ""), base.pct(b.get("pct")), "—", b.get("source", "")])
+    lines = [T.SECTION_BOND, *_table(["指标", "数值", "变动", "来源"], rows)]
+    fallback = [
+        f"{T.LABEL_INTERPRET}:{interp.get('bond_view', '')}",
+        f"{T.LABEL_REFERENCE}:{interp.get('bond_reference', '')}",
+    ]
+    lines += _narrative_block(narrative, "bond", fallback)
     return lines
 
 
-def _section_cb(data: dict, interp: dict) -> list[str]:
+# ---------------------------------------------------------------------------
+# 五、可转债
+# ---------------------------------------------------------------------------
+def _section_cb(data: dict, interp: dict, narrative: dict) -> list[str]:
     cb = data.get("convertible", {})
-    lines = [T.SECTION_CB]
     csi = cb.get("csi_index", {})
-    lines.append(_line("中证转债指数", f"{_pct(csi)}（{_num(csi, 'close', 0, '点')}）", _src(csi)))
     avg_p = cb.get("avg_price")
     avg_prem = cb.get("avg_premium")
     pctile = cb.get("premium_percentile_3y")
-    avg_p_s = f"{avg_p:.2f}元" if avg_p is not None else base.MISSING
-    prem_s = f"{avg_prem:.1f}%" if avg_prem is not None else base.MISSING
-    pctile_s = f"、近3年分位 {pctile:.0f}%" if pctile is not None else ""
-    lines.append(_line("估值指标", f"均价 {avg_p_s}、平均转股溢价率 {prem_s}{pctile_s}", cb.get("stats_source", "")))
     below = cb.get("below_par")
-    turnover = cb.get("turnover")
-    below_s = f"{int(below)}只" if below is not None else base.MISSING
-    turn_s = base.yuan_billion(turnover)
-    lines.append(_line("破面与成交", f"破面 {below_s}、成交额 {turn_s}", cb.get("stats_source", "")))
-    lines.append(f"{T.LABEL_INTERPRET}:{interp.get('cb_valuation', '')}")
+    rows = [
+        ["中证转债指数", f"{_pct(csi)}（{_num(csi, 'close', 0, '点')}）", _src(csi)],
+        ["全市场均价", f"{avg_p:.2f}元" if avg_p is not None else base.MISSING, cb.get("stats_source", "")],
+        ["平均转股溢价率", f"{avg_prem:.1f}%" if avg_prem is not None else base.MISSING, cb.get("stats_source", "")],
+        ["溢价率近3年分位", f"{pctile:.0f}%" if pctile is not None else base.MISSING, cb.get("stats_source", "")],
+        ["破面只数", f"{int(below)}只" if below is not None else base.MISSING, cb.get("stats_source", "")],
+        ["成交额", base.yuan_billion(cb.get("turnover")), cb.get("stats_source", "")],
+    ]
+    lines = [T.SECTION_CB, *_table(["指标", "数值", "来源"], rows)]
+    fallback = [f"{T.LABEL_INTERPRET}:{interp.get('cb_valuation', '')}"]
+    lines += _narrative_block(narrative, "convertible", fallback)
     lines.append(_line("事件提示", interp.get("cb_event_note", ""), cb.get("redeem_source", "")))
     return lines
 
 
-def render(data: dict, interp: dict, report_date: dt.date, trade_date) -> str:
+def render(data: dict, interp: dict, report_date: dt.date, trade_date, narrative: dict | None = None) -> str:
+    narrative = narrative or {}
     sections = [
         f"# 【EBC Daily】{report_date.strftime('%Y-%m-%d')}",
         f"> 数据基准日:{trade_date}（A股为前一交易日收盘,外盘为隔夜收盘,利率为最近更新交易日）。",
-        *_section_overview(data, interp),
-        *_section_equity(data, interp),
-        *_section_etf(data, interp),
-        *_section_bond(data, interp),
-        *_section_cb(data, interp),
+        *_section_overview(data, interp, narrative),
+        *_section_equity(data, interp, narrative),
+        *_section_etf(data, interp, narrative),
+        *_section_bond(data, interp, narrative),
+        *_section_cb(data, interp, narrative),
         "",
         "---",
         DISCLAIMER,

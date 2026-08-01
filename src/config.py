@@ -90,6 +90,14 @@ DISCLAIMER = (
     "请根据自身风险承受能力独立判断,必要时咨询专业顾问。以上内容由AI生成,仅供参考。"
 )
 
+# ---------------------------------------------------------------------------
+# LLM 叙事层(Groq OpenAI 兼容 API)
+# 在 console.groq.com/keys 创建 gsk_ key;每日 1 次调用远低于免费额度。
+# 可经环境变量 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL 覆盖。
+# ---------------------------------------------------------------------------
+LLM_BASE_URL_DEFAULT = "https://api.groq.com/openai/v1"
+LLM_MODEL_DEFAULT = "llama-3.3-70b-versatile"  # 通用最强免费;中文求质量可切 qwen/qwen3-32b
+
 # 字数控制
 WORD_MIN = 800
 WORD_MAX = 1200

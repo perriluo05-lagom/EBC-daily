@@ -57,5 +57,35 @@ def test_render_missing_fields_no_crash():
     assert "（来源：" in md  # 来源标注存在
 
 
+def test_render_has_tables():
+    """各板块应输出 Markdown 表格(表头分隔线)。"""
+    md = render.render(_data_all_missing(), _interp_all_missing(), dt.date(2026, 8, 1), "2026-07-31")
+    assert "| 品种 | 涨跌 | 数值 | 来源 |" in md  # 概览表头
+    assert "| --- |" in md  # 表头分隔线
+
+
+def test_render_falls_back_without_narrative():
+    """无 narrative 时回退规则版标签。"""
+    md = render.render(_data_all_missing(), _interp_all_missing(), dt.date(2026, 8, 1), "2026-07-31")
+    assert "**开盘定调**" in md or "**解读**" in md
+
+
+def test_render_uses_narrative_when_present():
+    """有 narrative 时使用 LLM 叙事,对应板块不再出现回退标签。"""
+    narrative = {"overview": "LLM测试叙事内容XYZ_UNIQUE"}
+    md = render.render(_data_all_missing(), _interp_all_missing(), dt.date(2026, 8, 1),
+                       "2026-07-31", narrative=narrative)
+    assert "LLM测试叙事内容XYZ_UNIQUE" in md
+    assert "**开盘定调**" not in md  # 概览已用叙事,不再回退
+
+
+def test_render_etf_table_has_new_fields():
+    """ETF 表应含 5日涨跌/资金净流入/规模 列。"""
+    md = render.render(_data_all_missing(), _interp_all_missing(), dt.date(2026, 8, 1), "2026-07-31")
+    assert "5日涨跌" in md
+    assert "当日资金净流入" in md
+    assert "规模" in md
+
+
 def test_subject_format():
     assert render.subject(dt.date(2026, 8, 1)) == "【EBC Daily】2026-08-01"

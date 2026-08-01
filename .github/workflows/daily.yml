@@ -46,6 +46,10 @@ jobs:
           MAIL_TO: ${{ secrets.MAIL_TO }}
           FORCE_DATE: ${{ github.event.inputs.forced_date }}
           DRY_RUN: ${{ github.event.inputs.dry_run }}
+          # LLM 智能解读(Groq;留空则自动回退规则版解读)
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
         run: |
           if [ "$DRY_RUN" = "true" ]; then
             python main.py --dry-run

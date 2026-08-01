@@ -166,3 +166,148 @@ def analyze(data: dict) -> dict:
         "cb_valuation": cb_valuation(data),
         "cb_event_note": cb_event_note(data),
     }
+
+
+# ---------------------------------------------------------------------------
+# facts_text:导出结构化"数据事实 + 规则结论"摘要,供 LLM prompt 使用
+# ---------------------------------------------------------------------------
+# 仅复述真实采集数据与规则结论,不新增任何数值;LLM 只能引用此处出现的信息。
+
+def _fs(d) -> str:
+    return d.get("source", "") if isinstance(d, dict) else ""
+
+
+def _fp(d) -> str:
+    return base.pct(d.get("pct")) if isinstance(d, dict) else base.MISSING
+
+
+def _fn(d, key, nd=2, unit="") -> str:
+    return base.num(d.get(key), nd, unit) if isinstance(d, dict) else base.MISSING
+
+
+def _fb(d, key) -> str:
+    return base.bp(d.get(key)) if isinstance(d, dict) else base.MISSING
+
+
+def _yi(v) -> str:
+    """元 → 亿元展示;None → 数据暂缺。"""
+    if v is None:
+        return base.MISSING
+    try:
+        return f"{float(v) / 1e8:,.2f}亿元"
+    except (TypeError, ValueError):
+        return base.MISSING
+
+
+def _facts_overview(data: dict, interp: dict) -> list[str]:
+    ov = data.get("overview", {})
+    dow, nas, sp = ov.get("dow", {}), ov.get("nasdaq", {}), ov.get("sp500", {})
+    u10 = ov.get("us10y", {})
+    a50, oil, gold = ov.get("a50", {}), ov.get("oil", {}), ov.get("gold", {})
+    L = ["【一、昨夜今晨概览】"]
+    L.append(f"- 道指:{_fp(dow)}({_fn(dow, 'close', 0, '点')})(来源:{_fs(dow)})")
+    L.append(f"- 纳指:{_fp(nas)}({_fn(nas, 'close', 0, '点')})(来源:{_fs(nas)})")
+    L.append(f"- 标普500:{_fp(sp)}({_fn(sp, 'close', 0, '点')})(来源:{_fs(sp)})")
+    L.append(f"- 美债10Y收益率:{_fn(u10, 'yield', 2, '%')}(变动{_fb(u10, 'change_bp')})(来源:{_fs(u10)})")
+    L.append(f"- 富时A50:{_fp(a50)}({_fn(a50, 'close', 0, '')})(来源:{_fs(a50)})")
+    L.append(f"- 原油:{_fp(oil)}({_fn(oil, 'close', 2, '')})(来源:{_fs(oil)})")
+    L.append(f"- 黄金:{_fp(gold)}({_fn(gold, 'close', 2, '')})(来源:{_fs(gold)})")
+    L.append(f"- 规则结论·开盘定调:{interp.get('opening_call', '')}")
+    return L
+
+
+def _facts_equity(data: dict, interp: dict) -> list[str]:
+    eq = data.get("equity", {})
+    hs, zz = eq.get("hs300", {}), eq.get("zz1000", {})
+    tv = eq.get("turnover", {})
+    ad = eq.get("advance_decline", {})
+    adv = ad.get("advancing") if isinstance(ad, dict) else None
+    dec = ad.get("declining") if isinstance(ad, dict) else None
+    ad_txt = f"涨{adv}/跌{dec}" if (adv is not None and dec is not None) else base.MISSING
+    vol = base.yuan_billion(tv.get("value")) if isinstance(tv, dict) else base.MISSING
+    chg = base.pct(tv.get("change_pct")) if isinstance(tv, dict) else base.MISSING
+    L = ["【二、A股大盘温度】"]
+    L.append(f"- 沪深300:{_fp(hs)}({_fn(hs, 'close', 0, '点')})(来源:{_fs(hs)})")
+    L.append(f"- 中证1000:{_fp(zz)}({_fn(zz, 'close', 0, '点')})(来源:{_fs(zz)})")
+    L.append(f"- 全市场成交额:{vol}(环比{chg})(来源:{_fs(tv)})")
+    L.append(f"- 涨跌家数:{ad_txt}(来源:{_fs(ad)})")
+    L.append(f"- 风格偏向:{eq.get('style', base.MISSING)}")
+    L.append(f"- 规则结论·市场温度:{interp.get('market_temperature', '')}")
+    return L
+
+
+def _facts_etf(data: dict, interp: dict) -> list[str]:
+    etf = data.get("etf", {})
+    L = ["【三、ETF焦点】"]
+    for gname, items in etf.get("groups", {}).items():
+        L.append(f"- {gname}:")
+        for it in items:
+            prem = it.get("premium")
+            prem_s = f"{prem:+.2f}%" if prem is not None else base.MISSING
+            L.append(
+                f"  · {it.get('name', '')}({it.get('code', '')}) 昨日{_fp(it)}、"
+                f"5日{base.pct(it.get('pct_5d'))}、溢价{prem_s}、"
+                f"资金净流入{_yi(it.get('net_flow'))}、规模{_yi(it.get('scale'))}"
+            )
+    top = etf.get("flow_top3") or []
+    if top:
+        names = "、".join(t.get("name", "") for t in top[:3])
+        L.append(f"- 全市场资金净流入TOP3:{names}")
+    L.append(f"- 规则结论·资金流向:{interp.get('etf_flow_note', '')}")
+    L.append(f"- 规则结论·溢价提示:{interp.get('etf_premium_note', '')}")
+    return L
+
+
+def _facts_bond(data: dict, interp: dict) -> list[str]:
+    bd = data.get("bond", {})
+    gov = bd.get("gov", {})
+    spread = bd.get("term_spread")
+    spread_s = f"{spread:.2f}%" if spread is not None else base.MISSING
+    dr = bd.get("shibor", {})
+    L = ["【四、债券市场】"]
+    L.append(f"- 国债10Y:{_fn(gov, 'cn10y', 2, '%')}(变动{_fb(gov, 'cn10y_chg_bp')})(来源:{_fs(gov)})")
+    L.append(f"- 国债1Y:{_fn(gov, 'cn1y', 2, '%')}(变动{_fb(gov, 'cn1y_chg_bp')})(来源:{_fs(gov)})")
+    L.append(f"- 期限利差(10Y-1Y):{spread_s}(来源:{bd.get('term_spread_source', '')})")
+    L.append(f"- Shibor 1周:{_fn(dr, 'rate', 2, '%')}(变动{_fb(dr, 'change_bp')})(来源:{_fs(dr)})")
+    for b in bd.get("bond_etfs", []):
+        L.append(f"- {b.get('name', '')}:{base.pct(b.get('pct'))}(来源:{b.get('source', '')})")
+    L.append(f"- 规则结论·债市核心矛盾:{interp.get('bond_view', '')}")
+    L.append(f"- 规则结论·参考思路:{interp.get('bond_reference', '')}")
+    return L
+
+
+def _facts_cb(data: dict, interp: dict) -> list[str]:
+    cb = data.get("convertible", {})
+    csi = cb.get("csi_index", {})
+    avg_p = cb.get("avg_price")
+    avg_prem = cb.get("avg_premium")
+    pctile = cb.get("premium_percentile_3y")
+    below = cb.get("below_par")
+    L = ["【五、可转债】"]
+    L.append(f"- 中证转债指数:{_fp(csi)}({_fn(csi, 'close', 0, '点')})(来源:{_fs(csi)})")
+    L.append(f"- 全市场均价:{f'{avg_p:.2f}元' if avg_p is not None else base.MISSING}(来源:{cb.get('stats_source', '')})")
+    L.append(f"- 平均转股溢价率:{f'{avg_prem:.1f}%' if avg_prem is not None else base.MISSING}")
+    L.append(f"- 溢价率近3年分位:{f'{pctile:.0f}%' if pctile is not None else base.MISSING}")
+    L.append(f"- 破面只数:{f'{int(below)}只' if below is not None else base.MISSING}")
+    L.append(f"- 成交额:{base.yuan_billion(cb.get('turnover'))}")
+    redeem = cb.get("force_redeem") or []
+    if redeem:
+        L.append(f"- 强赎名单:{'、'.join(redeem[:5])}(来源:{cb.get('redeem_source', '')})")
+    L.append(f"- 规则结论·估值:{interp.get('cb_valuation', '')}")
+    L.append(f"- 规则结论·事件提示:{interp.get('cb_event_note', '')}")
+    return L
+
+
+def facts_text(data: dict, interp: dict | None = None) -> str:
+    """导出五板块"数据事实 + 规则结论"摘要,供 LLM prompt 使用。
+
+    LLM 只能引用此处出现的信息,以此守住"禁止编造"红线。
+    """
+    interp = interp or {}
+    lines = []
+    lines += _facts_overview(data, interp)
+    lines += _facts_equity(data, interp)
+    lines += _facts_etf(data, interp)
+    lines += _facts_bond(data, interp)
+    lines += _facts_cb(data, interp)
+    return "\n".join(lines)

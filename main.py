@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from src import calendar as cal
 from src.fetchers import base, overseas, equity, etf as etf_mod, bond, convertible
-from src import analyze, render, emailer
+from src import analyze, render, emailer, llm
 
 logging.basicConfig(
     level=logging.INFO,
@@ -120,15 +120,19 @@ def main() -> int:
     data = collect_all()
     _summarize(data)
     interp = analyze.analyze(data)
-    md = render.render(data, interp, report_date, trade_date)
+    narrative = llm.generate_narratives(data, interp, report_date)
+    md = render.render(data, interp, report_date, trade_date, narrative)
 
     if args.dry_run:
         out_dir = Path(__file__).resolve().parent / "output"
         out_dir.mkdir(exist_ok=True)
-        out_file = out_dir / f"EBC-Daily-{report_date.strftime('%Y-%m-%d')}.md"
-        out_file.write_text(md, encoding="utf-8")
+        stem = f"EBC-Daily-{report_date.strftime('%Y-%m-%d')}"
+        md_file = out_dir / f"{stem}.md"
+        html_file = out_dir / f"{stem}.html"
+        md_file.write_text(md, encoding="utf-8")
+        html_file.write_text(emailer.md_to_html(md), encoding="utf-8")
         print(md)
-        print(f"\n[dry-run] 已写入 {out_file}", file=sys.stderr)
+        print(f"\n[dry-run] 已写入 {md_file} 与 {html_file}(浏览器打开 .html 可预览邮件效果)", file=sys.stderr)
         return 0
 
     ok = emailer.send(render.subject(report_date), md)
