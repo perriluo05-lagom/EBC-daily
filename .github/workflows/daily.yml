@@ -1,0 +1,62 @@
+name: EBC Daily 邮件推送
+
+on:
+  schedule:
+    # UTC 00:00 周一至五 = 北京时间 08:00(GitHub cron 可能延迟 5-30 分钟)
+    - cron: '0 0 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '仅生成不发送(输出到 artifact)'
+        required: false
+        type: boolean
+        default: false
+      forced_date:
+        description: '强制报告日期 YYYY-MM-DD(留空取今天)'
+        required: false
+
+concurrency:
+  group: ebc-daily
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 生成并发送
+        env:
+          MAIL_HOST: ${{ secrets.MAIL_HOST }}
+          MAIL_PORT: ${{ secrets.MAIL_PORT }}
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_PASS: ${{ secrets.MAIL_PASS }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          FORCE_DATE: ${{ github.event.inputs.forced_date }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python main.py --dry-run
+          else
+            python main.py
+          fi
+
+      - name: 上传 dry-run 产物
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ebc-daily-output
+          path: output/
+          retention-days: 7

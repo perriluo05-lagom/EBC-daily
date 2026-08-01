@@ -1,0 +1,29 @@
+name: Keepalive
+
+# GitHub Actions 的 schedule 任务若仓库 60 天无 commit 会被自动停用。
+# 此工作流每周做一次 trivial commit 以保持调度活跃(不归档邮件内容)。
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'   # 每周一 UTC 02:00
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 更新时间戳
+        run: |
+          mkdir -p .github
+          echo "keepalive $(date -u +%FT%TZ)" > .github/keepalive.txt
+      - name: 提交
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/keepalive.txt
+          git commit -m "chore: keepalive $(date -u +%F)" || echo "nothing to commit"
+          git push
