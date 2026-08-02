@@ -67,5 +67,13 @@ def test_no_raw_pipe_syntax_leaks():
 
 def test_section_headers_present():
     html = emailer.md_to_html(_sample_md())
-    for h in ["一、昨夜今晨概览", "二、A股大盘温度", "三、ETF焦点", "四、债券市场", "五、可转债"]:
+    for h in ["🌙 昨夜今晨概览", "📈 A股大盘温度", "💹 ETF焦点", "💼 债券市场", "🔄 可转债"]:
         assert h in html
+
+
+def test_header_banner_with_date():
+    """h1 应合并日期段落为渐变头部横幅（带 <span class="date">）。"""
+    html = emailer.md_to_html(_sample_md())
+    assert '<span class="date">' in html
+    assert "2026年8月1日" in html
+    assert "星期" in html

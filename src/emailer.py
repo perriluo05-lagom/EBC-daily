@@ -20,43 +20,48 @@ log = logging.getLogger("ebc.emailer")
 MAX_RETRIES = 3
 
 # ---------------------------------------------------------------------------
-# 邮件样式：深海军蓝主色 #1f3a5f，白底圆角卡片，板块用整行色带做强分界，
-# 表格仅横向细线、无交替底色（简约），重点标签加粗深蓝。摒弃莫兰迪灰调，
-# 追求清晰、克制、层次分明。表格外层可横向滚动以适配手机窄屏。
+# 邮件样式：深靛蓝渐变头部横幅 + emoji 板块标题 + 彩色下划线，
+# 白底圆角卡片、简约表格（无交替底色，表头深靛蓝），
+# 适配手机窄屏横向滚动。整体简约现代，参考 Newsletter 风格。
 # ---------------------------------------------------------------------------
 _CSS = """
 *{box-sizing:border-box;}
-body{margin:0;padding:24px 6px;background:#f4f5f7;
+body{margin:0;padding:24px 6px;background:#eef1f7;
   font-family:"Microsoft YaHei","PingFang SC","Helvetica Neue",Arial,sans-serif;
-  color:#1f2329;font-size:15px;line-height:1.8;-webkit-text-size-adjust:100%;}
-.ebc-wrap{max-width:600px;margin:0 auto;background:#ffffff;border-radius:10px;
-  overflow:hidden;box-shadow:0 2px 12px rgba(31,35,41,0.07);}
-.ebc-content{padding:30px 26px 26px;}
-h1{margin:0 0 20px;padding-bottom:16px;font-size:22px;font-weight:700;
-  color:#1f2329;letter-spacing:.5px;border-bottom:2px solid #1f3a5f;}
-h2{margin:34px -26px 18px;padding:13px 26px;font-size:16px;font-weight:600;
-  color:#ffffff;background:#1f3a5f;letter-spacing:.5px;}
-blockquote{margin:0 0 16px;padding:11px 14px;background:#f6f8fa;
-  border-left:3px solid #1f3a5f;border-radius:6px;color:#5a6066;font-size:13.5px;}
+  color:#1f2329;font-size:15px;line-height:1.85;-webkit-text-size-adjust:100%;}
+.ebc-wrap{max-width:620px;margin:0 auto;background:#ffffff;border-radius:12px;
+  overflow:hidden;box-shadow:0 4px 20px rgba(30,58,95,0.08);}
+.ebc-content{padding:0 28px 28px;}
+h1{margin:0 -28px 28px;padding:34px 28px;font-size:24px;font-weight:700;
+  color:#ffffff;background:#1e3a5f;
+  background-image:linear-gradient(135deg,#1e3a5f 0%,#3d3a7a 100%);
+  letter-spacing:.8px;line-height:1.45;}
+h1 .date{display:block;font-size:14px;font-weight:400;opacity:.88;
+  margin-top:6px;letter-spacing:.3px;}
+h2{margin:32px 0 16px;padding:0 0 10px;font-size:17px;font-weight:600;
+  color:#1e3a5f;border-bottom:2px solid #4a6fa5;background:none;letter-spacing:.3px;}
+blockquote{margin:0 0 16px;padding:12px 16px;background:#f6f8fc;
+  border-left:3px solid #4a6fa5;border-radius:0;font-size:13.5px;color:#5a6066;
+  line-height:1.75;}
 .ebc-tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;
-  margin:0 0 18px;border-radius:6px;}
+  margin:0 0 20px;border-radius:8px;border:1px solid #e4e8f0;}
 table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:380px;background:#fff;}
-th{padding:9px 11px;text-align:left;font-weight:600;color:#ffffff;
-  background:#1f3a5f;white-space:nowrap;}
-td{padding:8px 11px;border-bottom:1px solid #eef0f3;color:#1f2329;white-space:nowrap;}
+th{padding:10px 12px;text-align:left;font-weight:600;color:#ffffff;
+  background:#1e3a5f;white-space:nowrap;letter-spacing:.3px;}
+td{padding:9px 12px;border-bottom:1px solid #eef1f5;color:#1f2329;white-space:nowrap;}
 tr:last-child td{border-bottom:none;}
-strong{color:#1f3a5f;font-weight:600;}
+strong{color:#1e3a5f;font-weight:600;}
 ul{margin:6px 0 16px;padding-left:20px;}
 li{margin:4px 0;}
-hr{margin:24px 0;border:none;border-top:1px solid #e4e7ec;}
+hr{margin:28px 0;border:none;border-top:1px solid #e4e7ec;}
 p{margin:0 0 14px;}
 @media only screen and (max-width:480px){
   body{padding:12px 0;}
-  .ebc-content{padding:22px 16px;}
-  h2{margin:28px -16px 14px;padding:11px 16px;font-size:15px;}
-  h1{font-size:19px;}
+  .ebc-content{padding:0 18px 18px;}
+  h1{margin:0 -18px 22px;padding:26px 18px;font-size:20px;}
+  h2{margin:26px 0 12px;font-size:15px;}
   table{font-size:13px;min-width:340px;}
-  th,td{padding:7px 8px;}
+  th,td{padding:8px 9px;}
 }
 """
 
@@ -104,8 +109,23 @@ def _normalize_md(md: str) -> str:
     return "\n".join(out)
 
 
+def _post_process_header(body: str) -> str:
+    """将 h1 与紧随其后的日期段落合并为渐变头部横幅（日期副标题）。"""
+    import re as _re
+    # 匹配 <h1>...</h1> 后紧跟的 <p>日期</p>，合并为带副标题的 h1
+    pat = _re.compile(r"<h1>(.*?)</h1>\s*<p>(\d{4}年[^<]*?星期[一二三四五六日])</p>",
+                      _re.DOTALL)
+    m = pat.search(body)
+    if not m:
+        return body
+    title = m.group(1).strip()
+    date = m.group(2).strip()
+    new_h1 = f'<h1>{title}<br><span class="date">{date}</span></h1>'
+    return body[:m.start()] + new_h1 + body[m.end():]
+
+
 def md_to_html(md: str) -> str:
-    """Markdown 正文 → HTML 邮件(表格/列表/引用块,莫兰迪浅色样式)。
+    """Markdown 正文 → HTML 邮件(渐变头部横幅 + 表格/列表/引用块)。
 
     未安装 markdown 库时回退为纯文本(包在 <pre> 里),保证流程不中断。
     """
@@ -124,6 +144,8 @@ def md_to_html(md: str) -> str:
         extensions=["tables", "sane_lists", "nl2br"],
         output_format="html5",
     )
+    # 合并 h1 与日期段落为渐变头部横幅
+    body = _post_process_header(body)
     # 表格外包一层可横向滚动容器,适配手机窄屏
     body = body.replace("<table>", '<div class="ebc-tbl-wrap"><table>')
     body = body.replace("</table>", "</table></div>")

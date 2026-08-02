@@ -41,7 +41,7 @@ def _interp_all_missing():
 
 def test_render_has_five_sections():
     md = render.render(_data_all_missing(), _interp_all_missing(), dt.date(2026, 8, 1), "2026-07-31")
-    for h in ["## 一、", "## 二、", "## 三、", "## 四、", "## 五、"]:
+    for h in ["🌙 昨夜今晨概览", "📈 A股大盘温度", "💹 ETF焦点", "💼 债券市场", "🔄 可转债"]:
         assert h in md
 
 

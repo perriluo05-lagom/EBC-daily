@@ -222,8 +222,11 @@ def _section_cb(data: dict, interp: dict, narrative: dict) -> list[str]:
 
 def render(data: dict, interp: dict, report_date: dt.date, trade_date, narrative: dict | None = None) -> str:
     narrative = narrative or {}
+    date_str = f"{report_date.year}年{report_date.month}月{report_date.day}日"
+    weekday = ["一", "二", "三", "四", "五", "六", "日"][report_date.weekday()]
     sections = [
-        f"# 【EBC Daily】{report_date.strftime('%Y-%m-%d')}",
+        f"# 【EBC Daily】",
+        f"{date_str} 星期{weekday}",
         f"> 数据基准日：{trade_date}（A股为前一交易日收盘，外盘为隔夜收盘，利率为最近更新交易日）。",
         *_section_overview(data, interp, narrative),
         *_section_equity(data, interp, narrative),

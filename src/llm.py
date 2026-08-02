@@ -51,6 +51,25 @@ _SECTION_RE = re.compile(r"^[ \t]*===[ \t]*(overview|equity|etf|bond|convertible
                          re.MULTILINE | re.IGNORECASE)
 # 子标记 @@分析（@@参考 已废弃，若出现仅作分隔忽略其内容）
 _SUB_RE = re.compile(r"^[ \t]*@@[ \t]*(分析|参考)[ \t]*$", re.MULTILINE | re.IGNORECASE)
+# Qwen / 国产思考模型可能输出 <think>...</think> 推理块,需剥离
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_THINK_OPEN_RE = re.compile(r"<think>.*$", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_think(text: str) -> str:
+    """剥离模型的思考/推理块（<think>...</think>、<thinking>...</thinking>）。
+
+    Groq 上的 Qwen / DeepSeek 等模型默认开启 thinking 模式，
+    推理块会消耗 max_tokens 额度且干扰分隔符解析，必须先剥离。
+    """
+    if not text:
+        return text
+    t = _THINK_RE.sub("", text)
+    # 若模型输出未闭合的 <think>（max_tokens 截断导致），清除到文末
+    t = _THINK_OPEN_RE.sub("", t)
+    # 同时清理遗留的 <thinking> 标签
+    t = re.sub(r"</?thinking[^>]*>", "", t, flags=re.IGNORECASE)
+    return t.strip()
 
 
 def _config() -> tuple[str, str, str]:
@@ -71,7 +90,10 @@ def _user_prompt(facts: str, report_date) -> str:
 
 
 def _call_groq(api_key: str, base_url: str, model: str, user_prompt: str) -> str | None:
-    """直接用 requests 调 OpenAI 兼容 chat/completions(不引入 openai 依赖)。"""
+    """直接用 requests 调 OpenAI 兼容 chat/completions(不引入 openai 依赖)。
+
+    对 Qwen/DeepSeek 等国产模型，显式关闭 thinking 模式以避免推理块消耗 token 额度。
+    """
     import requests  # noqa: WPS433
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -82,15 +104,23 @@ def _call_groq(api_key: str, base_url: str, model: str, user_prompt: str) -> str
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.3,
-        "max_tokens": 2600,
+        "max_tokens": 3200,
+        # 显式关闭 thinking 模式——避免推理块消耗 max_tokens 额度导致无内容输出
+        "thinking": {"type": "disabled"},
     }
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=60)
-        r.raise_for_status()
+        r = requests.post(url, headers=headers, json=payload, timeout=90)
+        if r.status_code != 200:
+            log.error("LLM HTTP %d [%s]：%s", r.status_code, model, r.text[:500])
+            return None
         data = r.json()
-        return data["choices"][0]["message"]["content"]
+        content = data["choices"][0]["message"]["content"]
+        if not content or not content.strip():
+            log.warning("LLM 返回空内容 [%s]，可能是 thinking 模式或限流导致 token 耗尽。", model)
+            return None
+        return _strip_think(content)
     except Exception as e:  # noqa: BLE001
-        log.warning("LLM 调用失败（%s）：%s", model, e)
+        log.error("LLM 调用失败 [%s]：%s", model, e)
         return None
 
 
