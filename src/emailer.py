@@ -121,7 +121,7 @@ def md_to_html(md: str) -> str:
         )
     body = markdown.markdown(
         normed,
-        extensions=["tables", "sane_lists"],
+        extensions=["tables", "sane_lists", "nl2br"],
         output_format="html5",
     )
     # 表格外包一层可横向滚动容器,适配手机窄屏

@@ -34,24 +34,31 @@ SYSTEM_PROMPT = """你是中文金融资讯编辑,为每日市场早报(EBC Dail
 严格遵守以下红线:
 1. 只能引用输入中的数据事实,严禁编造任何数字、日期、来源、指标名称;输入中没有的字段一律说「数据暂缺」,绝不可臆造数值凑数。
 2. 措辞必须克制,使用「可关注/可以留意/需要留意」,严禁出现「建议买入/卖出/必涨/必跌/一定/必定」等绝对化指令。
-3. 输出格式:依次输出五个板块,每个板块以一行动标记开头(标记独占一行,前后无空格),紧跟该板块的 Markdown 叙事,直到下一个标记或结尾。标记与顺序固定为:
+3. 输出格式:依次输出五个板块,每个板块以一行动标记开头(标记独占一行,前后无空格),直到下一个标记或结尾。标记与顺序固定为:
 ===overview===
 ===equity===
 ===etf===
 ===bond===
 ===convertible===
-4. 每板块 Markdown 结构(不要写板块大标题,直接从解读开始):
-**解读与判断**
-(120-200字,基于数据事实的市场解读,可结合规则结论展开但不得新增数字)
-**交易参考（基于客观数据）**
-> **数据事实**：...(只复述输入事实)
-> **我的参考思路**：...(基于事实的克制思路)
-> **今天可以扫一眼的**：...(1-2条观察点;概览板块可省略此条)
-5. 只输出上述五个板块内容,不要前言、不要解释、不要代码围栏、不要 JSON。"""
+4. 每板块用两个子标记组织内容(子标记独占一行,前后无空格):
+@@分析
+(写 2-3 个短段落,每段一个完整意思;段落之间必须空一行;基于数据事实解读,可引用规则结论(如「规则结论指出:...」)但不得新增数字;不要写板块大标题,不要用 Markdown 粗体标题)
+@@参考
+数据事实：...(只复述输入事实,一行)
+我的参考思路：...(基于事实的克制思路,一行)
+今天可以扫一眼的：...(1-2条观察点,一行;概览板块可省略此条)
+5. 「@@分析」「@@参考」「数据事实：」「我的参考思路：」「今天可以扫一眼的：」这些标记/前缀必须原样输出,不要加粗、不要加引号、不要加 Markdown 符号。
+6. 只输出上述五个板块内容,不要前言、不要解释、不要代码围栏、不要 JSON。"""
 
 # 匹配独占一行的 ===板块名=== 标记
 _SECTION_RE = re.compile(r"^[ \t]*===[ \t]*(overview|equity|etf|bond|convertible)[ \t]*===[ \t]*$",
                          re.MULTILINE | re.IGNORECASE)
+# 子标记 @@分析 / @@参考
+_SUB_RE = re.compile(r"^[ \t]*@@[ \t]*(分析|参考)[ \t]*$", re.MULTILINE | re.IGNORECASE)
+# 参考区三行前缀
+_FACT_RE = re.compile(r"^[ \t]*数据事实[：:]\s*(.+)$", re.MULTILINE)
+_IDEA_RE = re.compile(r"^[ \t]*我的参考思路[：:]\s*(.+)$", re.MULTILINE)
+_WATCH_RE = re.compile(r"^[ \t]*今天可以扫一眼的[：:]\s*(.+)$", re.MULTILINE)
 
 
 def _config() -> tuple[str, str, str]:
@@ -95,11 +102,52 @@ def _call_groq(api_key: str, base_url: str, model: str, user_prompt: str) -> str
         return None
 
 
-def _extract_sections(text: str) -> dict:
-    """从分隔符格式的文本中提取各板块叙事。
+def _parse_section(body: str) -> dict:
+    """将单个板块正文解析为结构化叙事 {analysis:[段落], facts, idea, watch}。
 
-    每个 `===name===` 独占一行,其内容到下一个标记(或文末)为止。
-    未找到任何标记返回 {}(由上层回退规则版)。
+    优先按 @@分析 / @@参考 子标记切分;若模型未用子标记,则整段视作分析。
+    分析段落按空行切分;参考三行按前缀(数据事实/我的参考思路/今天可以扫一眼的)提取。
+    """
+    if not body or not body.strip():
+        return {}
+    if _SUB_RE.search(body):
+        parts = _SUB_RE.split(body)
+        # split 带捕获组 → ['', '分析', content, '参考', content, ...]
+        analysis_text, ref_text = "", ""
+        for i in range(1, len(parts) - 1, 2):
+            marker = parts[i].strip()
+            content = parts[i + 1]
+            if marker.startswith("分析"):
+                analysis_text = content
+            elif marker.startswith("参考"):
+                ref_text = content
+    else:
+        # 容错:未用子标记,整段当分析
+        analysis_text, ref_text = body, ""
+
+    paras = [p.strip() for p in re.split(r"\n\s*\n", analysis_text.strip()) if p.strip()]
+    if not paras and analysis_text.strip():
+        # 段落间未空行时,按单换行兜底切分
+        paras = [ln.strip() for ln in analysis_text.strip().split("\n") if ln.strip()]
+
+    def _grab(regex: re.Pattern) -> str:
+        m = regex.search(ref_text)
+        return m.group(1).strip() if m else ""
+
+    return {
+        "analysis": paras,
+        "facts": _grab(_FACT_RE),
+        "idea": _grab(_IDEA_RE),
+        "watch": _grab(_WATCH_RE),
+    }
+
+
+def _extract_sections(text: str) -> dict:
+    """从分隔符格式的文本中提取各板块结构化叙事。
+
+    每个 `===name===` 独占一行,其内容到下一个标记(或文末)为止,
+    再经 _parse_section 解析为 {analysis, facts, idea, watch}。
+    分析与参考均为空的板块不返回(由上层回退规则版)。
     """
     if not text:
         return {}
@@ -111,14 +159,14 @@ def _extract_sections(text: str) -> dict:
     marks = list(_SECTION_RE.finditer(t))
     if not marks:
         return {}
-    out: dict[str, str] = {}
+    out: dict[str, dict] = {}
     for i, m in enumerate(marks):
         name = m.group(1).lower()
         start = m.end()
         end = marks[i + 1].start() if i + 1 < len(marks) else len(t)
-        body = t[start:end].strip()
-        if body:
-            out[name] = body
+        parsed = _parse_section(t[start:end])
+        if parsed.get("analysis") or parsed.get("facts") or parsed.get("idea") or parsed.get("watch"):
+            out[name] = parsed
     return out
 
 

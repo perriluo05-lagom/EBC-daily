@@ -65,26 +65,47 @@ def test_render_has_tables():
 
 
 def test_render_falls_back_without_narrative():
-    """无 narrative 时回退规则版标签。"""
+    """无 narrative 时回退规则版,仍用 *解读与判断* 小标题。"""
     md = render.render(_data_all_missing(), _interp_all_missing(), dt.date(2026, 8, 1), "2026-07-31")
-    assert "**开盘定调**" in md or "**解读**" in md
+    assert "*解读与判断*" in md
 
 
 def test_render_uses_narrative_when_present():
-    """有 narrative 时使用 LLM 叙事,对应板块不再出现回退标签。"""
-    narrative = {"overview": "LLM测试叙事内容XYZ_UNIQUE"}
+    """有结构化 narrative 时使用 LLM 叙事,对应板块不再出现回退。"""
+    narrative = {"overview": {"analysis": ["LLM测试叙事内容XYZ_UNIQUE"], "facts": "", "idea": "", "watch": ""}}
     md = render.render(_data_all_missing(), _interp_all_missing(), dt.date(2026, 8, 1),
                        "2026-07-31", narrative=narrative)
     assert "LLM测试叙事内容XYZ_UNIQUE" in md
-    assert "**开盘定调**" not in md  # 概览已用叙事,不再回退
+    assert "开盘定调：" not in md  # 概览已用叙事,不再回退
+
+
+def test_render_narrative_structure():
+    """结构化叙事应输出 *解读与判断*/*交易参考* 小标题,分析多段、参考三行。"""
+    narrative = {"etf": {
+        "analysis": ["宽基ETF全线收涨。", "资金净流入居前。"],
+        "facts": "沪深300ETF上涨1.04%",
+        "idea": "可以关注宽基ETF的资金流向",
+        "watch": "创业板ETF和科创50ETF的表现",
+    }}
+    md = render.render(_data_all_missing(), _interp_all_missing(), dt.date(2026, 8, 1),
+                       "2026-07-31", narrative=narrative)
+    assert "*解读与判断*" in md
+    assert "*交易参考*" in md
+    assert "数据事实：沪深300ETF上涨1.04%" in md
+    assert "我的参考思路：可以关注宽基ETF的资金流向" in md
+    assert "今天可以扫一眼的：创业板ETF和科创50ETF的表现" in md
+    # 分析两段之间应有空行(不堆砌在一段)
+    assert "宽基ETF全线收涨。\n\n资金净流入居前。" in md
 
 
 def test_render_etf_table_has_new_fields():
-    """ETF 表应含 5日涨跌/资金净流入/规模 列。"""
+    """ETF 合并表应含 组别/5日涨跌/资金净流入 列。"""
     md = render.render(_data_all_missing(), _interp_all_missing(), dt.date(2026, 8, 1), "2026-07-31")
+    assert "组别" in md
     assert "5日涨跌" in md
-    assert "当日资金净流入" in md
-    assert "规模" in md
+    assert "资金净流入" in md
+    assert "当前溢价率" not in md  # 已精简
+    assert "规模" not in md  # 已精简
 
 
 def test_subject_format():

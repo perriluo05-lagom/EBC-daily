@@ -66,11 +66,30 @@ def _table(headers: list[str], rows: list[list[str]]) -> list[str]:
 
 
 def _narrative_block(narrative: dict, section: str, fallback_lines: list[str]) -> list[str]:
-    """有 LLM 叙事则用叙事(空行隔开),否则回退规则版 fallback_lines。"""
+    """有 LLM 结构化叙事则按 *解读与判断*/*交易参考* 规范排版;否则回退 fallback_lines。
+
+    结构化叙事保证:小标题独占段落、分析段间空行、参考三行连续(配合 nl2br 紧凑换行),
+    避免「标签与正文堆砌在一段」。
+    """
     nar = (narrative or {}).get(section)
-    if nar:
-        return ["", nar]
-    return fallback_lines
+    if not nar:
+        return ["", *fallback_lines]
+    out = ["", T.LABEL_ANALYSIS, ""]
+    for p in nar.get("analysis", []):
+        if p.strip():
+            out.append(p.strip())
+            out.append("")
+    ref = [
+        (T.LABEL_FACTS, nar.get("facts")),
+        (T.LABEL_IDEA, nar.get("idea")),
+        (T.LABEL_WATCH, nar.get("watch")),
+    ]
+    ref_lines = [f"{lbl}：{v}" for lbl, v in ref if v]
+    if ref_lines:
+        out.append(T.LABEL_REF)
+        out.append("")
+        out.extend(ref_lines)  # 连续三行(无空行),配合 nl2br 紧凑换行
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +110,7 @@ def _section_overview(data: dict, interp: dict, narrative: dict) -> list[str]:
         ["黄金", _pct(gold), _num(gold, "close", 2, ""), _src(gold)],
     ]
     lines = [T.SECTION_OVERVIEW, *_table(["品种", "涨跌", "数值", "来源"], rows)]
-    fallback = [f"{T.LABEL_OPENING}:{interp.get('opening_call', '')}"]
+    fallback = [T.LABEL_ANALYSIS, "", f"开盘定调：{interp.get('opening_call', '')}"]
     lines += _narrative_block(narrative, "overview", fallback)
     return lines
 
@@ -117,7 +136,7 @@ def _section_equity(data: dict, interp: dict, narrative: dict) -> list[str]:
     ad_txt = f"涨 {adv} / 跌 {dec}" if (adv is not None and dec is not None) else base.MISSING
     lines.append(_line("涨跌家数", ad_txt, _src(ad)))
     lines.append(_line("风格偏向", eq.get("style", base.MISSING), eq.get("style_source", "")))
-    fallback = [f"{T.LABEL_INTERPRET}:{interp.get('market_temperature', '')}"]
+    fallback = [T.LABEL_ANALYSIS, "", f"解读：{interp.get('market_temperature', '')}"]
     lines += _narrative_block(narrative, "equity", fallback)
     return lines
 
@@ -125,34 +144,35 @@ def _section_equity(data: dict, interp: dict, narrative: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 # 三、ETF焦点
 # ---------------------------------------------------------------------------
-def _etf_group_table(items: list[dict]) -> list[str]:
+def _etf_table(etf: dict) -> list[str]:
+    """ETF 合并表:宽基/策略行业合为一张表,带「组别」列,精简为 6 列。
+
+    去掉「当前溢价率」「规模」(溢价异常在叙事中提示、规模非每日必看),
+    降低原双 7 列表的拥挤感,保留核心的涨跌 / 5日趋势 / 资金净流入。
+    """
     rows = []
-    for it in items:
-        prem = it.get("premium")
-        prem_s = f"{prem:+.2f}%" if prem is not None else base.MISSING
-        rows.append([
-            it.get("name", ""),
-            base.pct(it.get("pct")),
-            base.pct(it.get("pct_5d")),
-            prem_s,
-            _yi(it.get("net_flow")),
-            _yi(it.get("scale")),
-            it.get("source", ""),
-        ])
-    return _table(["品种", "昨日涨跌", "5日涨跌", "当前溢价率", "当日资金净流入", "规模", "来源"], rows)
+    for gname, items in etf.get("groups", {}).items():
+        for it in items:
+            rows.append([
+                gname,
+                it.get("name", ""),
+                base.pct(it.get("pct")),
+                base.pct(it.get("pct_5d")),
+                _yi(it.get("net_flow")),
+                it.get("source", ""),
+            ])
+    return _table(["组别", "品种", "昨日涨跌", "5日涨跌", "资金净流入", "来源"], rows)
 
 
 def _section_etf(data: dict, interp: dict, narrative: dict) -> list[str]:
     etf = data.get("etf", {})
-    lines = [T.SECTION_ETF]
-    for gname, items in etf.get("groups", {}).items():
-        lines.append(f"**{gname}**")
-        lines += _etf_group_table(items)
-        lines.append("")
-    fallback = [
-        _line("资金流向", interp.get("etf_flow_note", ""), etf.get("source", "")),
-        _line("溢价提示", interp.get("etf_premium_note", ""), etf.get("source", "")),
-    ]
+    lines = [T.SECTION_ETF, *_etf_table(etf)]
+    fb = []
+    if interp.get("etf_flow_note"):
+        fb.append(f"资金流向：{interp['etf_flow_note']}")
+    if interp.get("etf_premium_note"):
+        fb.append(f"溢价提示：{interp['etf_premium_note']}")
+    fallback = [T.LABEL_ANALYSIS, "", *fb] if fb else []
     lines += _narrative_block(narrative, "etf", fallback)
     return lines
 
@@ -176,8 +196,8 @@ def _section_bond(data: dict, interp: dict, narrative: dict) -> list[str]:
         rows.append([b.get("name", ""), base.pct(b.get("pct")), "—", b.get("source", "")])
     lines = [T.SECTION_BOND, *_table(["指标", "数值", "变动", "来源"], rows)]
     fallback = [
-        f"{T.LABEL_INTERPRET}:{interp.get('bond_view', '')}",
-        f"{T.LABEL_REFERENCE}:{interp.get('bond_reference', '')}",
+        T.LABEL_ANALYSIS, "", f"解读：{interp.get('bond_view', '')}",
+        "", T.LABEL_REF, "", f"参考思路：{interp.get('bond_reference', '')}",
     ]
     lines += _narrative_block(narrative, "bond", fallback)
     return lines
@@ -202,9 +222,13 @@ def _section_cb(data: dict, interp: dict, narrative: dict) -> list[str]:
         ["成交额", base.yuan_billion(cb.get("turnover")), cb.get("stats_source", "")],
     ]
     lines = [T.SECTION_CB, *_table(["指标", "数值", "来源"], rows)]
-    fallback = [f"{T.LABEL_INTERPRET}:{interp.get('cb_valuation', '')}"]
+    fallback = [T.LABEL_ANALYSIS, "", f"解读：{interp.get('cb_valuation', '')}"]
     lines += _narrative_block(narrative, "convertible", fallback)
-    lines.append(_line("事件提示", interp.get("cb_event_note", ""), cb.get("redeem_source", "")))
+    event = interp.get("cb_event_note", "")
+    if event:
+        ev_src = cb.get("redeem_source", "")
+        lines.append("")
+        lines.append(f"事件提示：{event}（来源：{ev_src}）" if ev_src else f"事件提示：{event}")
     return lines
 
 

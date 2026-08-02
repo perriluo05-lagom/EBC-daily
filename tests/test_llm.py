@@ -53,24 +53,41 @@ def test_call_failure_returns_empty(monkeypatch):
 def test_extract_sections_basic():
     txt = "===overview===\n**解读与判断**\n开盘偏强\n===equity===\n情绪偏暖"
     out = llm._extract_sections(txt)
-    assert out == {"overview": "**解读与判断**\n开盘偏强", "equity": "情绪偏暖"}
+    assert out["overview"]["analysis"] == ["**解读与判断**\n开盘偏强"]
+    assert out["equity"]["analysis"] == ["情绪偏暖"]
+
+
+def test_extract_sections_with_submarkers():
+    """@@分析/@@参考 子标记应正确切分,分析按空行分段,参考按前缀提取。"""
+    txt = (
+        "===etf===\n@@分析\n宽基ETF全线收涨。\n\n资金净流入居前。\n"
+        "@@参考\n数据事实：沪深300ETF上涨1.04%\n我的参考思路：可以关注资金流向\n今天可以扫一眼的：创业板ETF表现"
+    )
+    out = llm._extract_sections(txt)
+    etf = out["etf"]
+    assert etf["analysis"] == ["宽基ETF全线收涨。", "资金净流入居前。"]
+    assert etf["facts"] == "沪深300ETF上涨1.04%"
+    assert etf["idea"] == "可以关注资金流向"
+    assert etf["watch"] == "创业板ETF表现"
 
 
 def test_extract_sections_case_insensitive():
     out = llm._extract_sections("===OVERVIEW===\n开盘偏强")
-    assert out == {"overview": "开盘偏强"}
+    assert out["overview"]["analysis"] == ["开盘偏强"]
 
 
 def test_extract_sections_with_fence():
     txt = "```\n===overview===\n开盘偏强\n===equity===\n情绪偏暖\n```"
     out = llm._extract_sections(txt)
-    assert out["overview"] == "开盘偏强" and out["equity"] == "情绪偏暖"
+    assert out["overview"]["analysis"] == ["开盘偏强"]
+    assert out["equity"]["analysis"] == ["情绪偏暖"]
 
 
 def test_extract_sections_ignores_leading_text():
     """标记前的闲聊文字应被忽略,中间板块按下一个标记干净切分。"""
-    txt = "好的,以下是结果:\n===etf===\n资金流入\n===bond===\n利率平稳"
-    assert llm._extract_sections(txt) == {"etf": "资金流入", "bond": "利率平稳"}
+    out = llm._extract_sections("好的,以下是结果:\n===etf===\n资金流入\n===bond===\n利率平稳")
+    assert out["etf"]["analysis"] == ["资金流入"]
+    assert out["bond"]["analysis"] == ["利率平稳"]
 
 
 def test_extract_sections_no_markers_returns_empty():
@@ -88,7 +105,7 @@ def test_generate_with_mocked_call(monkeypatch):
     interp = analyze.analyze(data)
     out = llm.generate_narratives(data, interp, dt.date(2026, 8, 1))
     assert set(out.keys()) == {"overview", "equity", "etf", "bond", "convertible"}
-    assert out["overview"] == "开盘偏强"
+    assert out["overview"]["analysis"] == ["开盘偏强"]
 
 
 def test_generate_partial_sections(monkeypatch):
