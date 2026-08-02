@@ -96,7 +96,7 @@ DISCLAIMER = (
 # 可经环境变量 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL 覆盖。
 # ---------------------------------------------------------------------------
 LLM_BASE_URL_DEFAULT = "https://api.groq.com/openai/v1"
-LLM_MODEL_DEFAULT = "llama-3.3-70b-versatile"  # 通用最强免费;中文求质量可切 qwen/qwen3-32b
+LLM_MODEL_DEFAULT = "lqwen/qwen3-32b"  # 通用最强免费;中文求质量可切 qwen/qwen3-32b
 
 # 字数控制
 WORD_MIN = 800
