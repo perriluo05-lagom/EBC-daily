@@ -39,7 +39,7 @@ def _bp(metric: dict | None, key: str) -> str:
 
 
 def _line(label: str, value: str, source: str) -> str:
-    return f"- {label}:{value}（来源：{source}）" if source else f"- {label}:{value}"
+    return f"- **{label}**：{value}（来源：{source}）" if source else f"- **{label}**：{value}"
 
 
 def _yi(v) -> str:
@@ -66,9 +66,9 @@ def _table(headers: list[str], rows: list[list[str]]) -> list[str]:
 
 
 def _narrative_block(narrative: dict, section: str, fallback_lines: list[str]) -> list[str]:
-    """有 LLM 结构化叙事则按 *解读与判断*/*交易参考* 规范排版;否则回退 fallback_lines。
+    """有 LLM 结构化叙事则按 **解读与判断** 规范排版；否则回退 fallback_lines。
 
-    结构化叙事保证:小标题独占段落、分析段间空行、参考三行连续(配合 nl2br 紧凑换行),
+    结构化叙事只含分析段落（交易参考已删除）：小标题独占段落、分析段间空行，
     避免「标签与正文堆砌在一段」。
     """
     nar = (narrative or {}).get(section)
@@ -79,16 +79,6 @@ def _narrative_block(narrative: dict, section: str, fallback_lines: list[str]) -
         if p.strip():
             out.append(p.strip())
             out.append("")
-    ref = [
-        (T.LABEL_FACTS, nar.get("facts")),
-        (T.LABEL_IDEA, nar.get("idea")),
-        (T.LABEL_WATCH, nar.get("watch")),
-    ]
-    ref_lines = [f"{lbl}：{v}" for lbl, v in ref if v]
-    if ref_lines:
-        out.append(T.LABEL_REF)
-        out.append("")
-        out.extend(ref_lines)  # 连续三行(无空行),配合 nl2br 紧凑换行
     return out
 
 
@@ -145,10 +135,11 @@ def _section_equity(data: dict, interp: dict, narrative: dict) -> list[str]:
 # 三、ETF焦点
 # ---------------------------------------------------------------------------
 def _etf_table(etf: dict) -> list[str]:
-    """ETF 合并表:宽基/策略行业合为一张表,带「组别」列,精简为 6 列。
+    """ETF 合并表：宽基/策略行业合为一张表，带「组别」列，精简为 6 列。
 
-    去掉「当前溢价率」「规模」(溢价异常在叙事中提示、规模非每日必看),
-    降低原双 7 列表的拥挤感,保留核心的涨跌 / 5日趋势 / 资金净流入。
+    用「成交额」替代原「5日涨跌」——成交额直接来自 fund_etf_spot_em 一次全量返回，
+    可靠不缺失；5日涨跌需逐只拉历史K线，本地代理环境下常缺失。保留核心的涨跌 /
+    成交额（流动性）/ 资金净流入。
     """
     rows = []
     for gname, items in etf.get("groups", {}).items():
@@ -157,11 +148,11 @@ def _etf_table(etf: dict) -> list[str]:
                 gname,
                 it.get("name", ""),
                 base.pct(it.get("pct")),
-                base.pct(it.get("pct_5d")),
+                _yi(it.get("turnover")),
                 _yi(it.get("net_flow")),
                 it.get("source", ""),
             ])
-    return _table(["组别", "品种", "昨日涨跌", "5日涨跌", "资金净流入", "来源"], rows)
+    return _table(["组别", "品种", "昨日涨跌", "成交额", "资金净流入", "来源"], rows)
 
 
 def _section_etf(data: dict, interp: dict, narrative: dict) -> list[str]:
@@ -195,10 +186,7 @@ def _section_bond(data: dict, interp: dict, narrative: dict) -> list[str]:
     for b in bd.get("bond_etfs", []):
         rows.append([b.get("name", ""), base.pct(b.get("pct")), "—", b.get("source", "")])
     lines = [T.SECTION_BOND, *_table(["指标", "数值", "变动", "来源"], rows)]
-    fallback = [
-        T.LABEL_ANALYSIS, "", f"解读：{interp.get('bond_view', '')}",
-        "", T.LABEL_REF, "", f"参考思路：{interp.get('bond_reference', '')}",
-    ]
+    fallback = [T.LABEL_ANALYSIS, "", f"解读：{interp.get('bond_view', '')}"]
     lines += _narrative_block(narrative, "bond", fallback)
     return lines
 
@@ -236,7 +224,7 @@ def render(data: dict, interp: dict, report_date: dt.date, trade_date, narrative
     narrative = narrative or {}
     sections = [
         f"# 【EBC Daily】{report_date.strftime('%Y-%m-%d')}",
-        f"> 数据基准日:{trade_date}（A股为前一交易日收盘,外盘为隔夜收盘,利率为最近更新交易日）。",
+        f"> 数据基准日：{trade_date}（A股为前一交易日收盘，外盘为隔夜收盘，利率为最近更新交易日）。",
         *_section_overview(data, interp, narrative),
         *_section_equity(data, interp, narrative),
         *_section_etf(data, interp, narrative),
@@ -248,8 +236,8 @@ def render(data: dict, interp: dict, report_date: dt.date, trade_date, narrative
     ]
     body = "\n".join(sections)
     if len(body) < WORD_MIN:
-        # 不编造内容补字数;仅如实说明
-        body += "\n\n> 注:本期部分字段数据暂缺,正文偏短,接口稳定后将自动充实。"
+        # 不编造内容补字数；仅如实说明
+        body += "\n\n> 注：本期部分字段数据暂缺，正文偏短，接口稳定后将自动充实。"
     return body
 
 

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""邮件发送层:QQ 邮箱 SMTP,失败重试 3 次。
+"""邮件发送层：QQ 邮箱 SMTP，失败重试 3 次。
 
-正文以 HTML 发送:Markdown 先转为 HTML,再套用莫兰迪浅色邮件样式,
-保证 PC / 手机端表格均为真正的表格、层次清晰。配置从环境变量读取:
+正文以 HTML 发送：Markdown 先转为 HTML，再套用深海军蓝主色邮件样式，
+保证 PC / 手机端表格均为真正的表格、层次清晰。配置从环境变量读取：
 MAIL_HOST/MAIL_PORT/MAIL_USER/MAIL_PASS/MAIL_FROM/MAIL_TO。
 """
 from __future__ import annotations
@@ -20,40 +20,40 @@ log = logging.getLogger("ebc.emailer")
 MAX_RETRIES = 3
 
 # ---------------------------------------------------------------------------
-# 莫兰迪浅色邮件样式:雾蓝 #728ec7 点缀,白底卡片,9px 圆角,仅横向细线,
-# 交替行底色,表格外层可横向滚动以适配手机窄屏。
+# 邮件样式：深海军蓝主色 #1f3a5f，白底圆角卡片，板块用整行色带做强分界，
+# 表格仅横向细线、无交替底色（简约），重点标签加粗深蓝。摒弃莫兰迪灰调，
+# 追求清晰、克制、层次分明。表格外层可横向滚动以适配手机窄屏。
 # ---------------------------------------------------------------------------
 _CSS = """
 *{box-sizing:border-box;}
-body{margin:0;padding:24px 6px;background:#f3f5f8;
+body{margin:0;padding:24px 6px;background:#f4f5f7;
   font-family:"Microsoft YaHei","PingFang SC","Helvetica Neue",Arial,sans-serif;
-  color:#2b2b2b;font-size:15px;line-height:1.75;-webkit-text-size-adjust:100%;}
-.ebc-wrap{max-width:600px;margin:0 auto;background:#ffffff;border-radius:9px;
-  overflow:hidden;box-shadow:0 3px 10px rgba(43,43,43,0.06);}
-.ebc-content{padding:28px 24px 24px;}
-h1{margin:0 0 14px;padding-bottom:14px;font-size:21px;font-weight:700;
-  color:#2b2b2b;letter-spacing:.5px;border-bottom:2px solid #728ec7;}
-h2{margin:26px -24px 14px;padding:11px 24px;font-size:16px;font-weight:600;
-  color:#ffffff;background:#728ec7;letter-spacing:.3px;}
-blockquote{margin:0 0 16px;padding:11px 14px;background:#eef2f8;
-  border-left:3px solid #728ec7;border-radius:6px;color:#5a5d63;font-size:13.5px;}
+  color:#1f2329;font-size:15px;line-height:1.8;-webkit-text-size-adjust:100%;}
+.ebc-wrap{max-width:600px;margin:0 auto;background:#ffffff;border-radius:10px;
+  overflow:hidden;box-shadow:0 2px 12px rgba(31,35,41,0.07);}
+.ebc-content{padding:30px 26px 26px;}
+h1{margin:0 0 20px;padding-bottom:16px;font-size:22px;font-weight:700;
+  color:#1f2329;letter-spacing:.5px;border-bottom:2px solid #1f3a5f;}
+h2{margin:34px -26px 18px;padding:13px 26px;font-size:16px;font-weight:600;
+  color:#ffffff;background:#1f3a5f;letter-spacing:.5px;}
+blockquote{margin:0 0 16px;padding:11px 14px;background:#f6f8fa;
+  border-left:3px solid #1f3a5f;border-radius:6px;color:#5a6066;font-size:13.5px;}
 .ebc-tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;
-  margin:0 0 16px;border-radius:6px;}
+  margin:0 0 18px;border-radius:6px;}
 table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:380px;background:#fff;}
 th{padding:9px 11px;text-align:left;font-weight:600;color:#ffffff;
-  background:#728ec7;white-space:nowrap;}
-td{padding:8px 11px;border-bottom:1px solid #eef0f3;color:#2b2b2b;white-space:nowrap;}
-tr:nth-child(even) td{background:#f7f9fb;}
+  background:#1f3a5f;white-space:nowrap;}
+td{padding:8px 11px;border-bottom:1px solid #eef0f3;color:#1f2329;white-space:nowrap;}
 tr:last-child td{border-bottom:none;}
-strong{color:#3a5a8c;font-weight:600;}
+strong{color:#1f3a5f;font-weight:600;}
 ul{margin:6px 0 16px;padding-left:20px;}
 li{margin:4px 0;}
-hr{margin:22px 0;border:none;border-top:1px solid #e4e7ec;}
+hr{margin:24px 0;border:none;border-top:1px solid #e4e7ec;}
 p{margin:0 0 14px;}
 @media only screen and (max-width:480px){
   body{padding:12px 0;}
-  .ebc-content{padding:20px 16px;}
-  h2{margin:22px -16px 12px;padding:10px 16px;font-size:15px;}
+  .ebc-content{padding:22px 16px;}
+  h2{margin:28px -16px 14px;padding:11px 16px;font-size:15px;}
   h1{font-size:19px;}
   table{font-size:13px;min-width:340px;}
   th,td{padding:7px 8px;}

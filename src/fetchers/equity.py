@@ -92,7 +92,7 @@ def fetch_equity(sina_df) -> dict:
     h, z = hs300.get("pct"), zz1000.get("pct")
     if h is not None and z is not None:
         diff = z - h
-        style = "小盘相对占优(近似)" if diff > 0.5 else ("大盘相对占优(近似)" if diff < -0.5 else "大小盘相对均衡(近似)")
+        style = "小盘相对占优（近似）" if diff > 0.5 else ("大盘相对占优（近似）" if diff < -0.5 else "大小盘相对均衡（近似）")
     else:
         style = "数据暂缺"
     return {

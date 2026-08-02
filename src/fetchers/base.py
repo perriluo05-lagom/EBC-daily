@@ -105,4 +105,4 @@ def yuan_billion(x: float | None) -> str:
 
 def tag(source: str) -> str:
     """来源标注。"""
-    return f"(来源:{source})"
+    return f"（来源：{source}）"

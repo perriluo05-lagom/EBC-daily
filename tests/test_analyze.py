@@ -13,7 +13,7 @@ def _data(hs=0.8, vol_chg=15.0, adv=3000, dec=2000, dow=0.6, us10y_chg=4.0,
             "hs300": {"pct": hs}, "zz1000": {"pct": hs - 0.8},
             "turnover": {"change_pct": vol_chg},
             "advance_decline": {"advancing": adv, "declining": dec},
-            "style": "小盘相对占优(近似)",
+            "style": "小盘相对占优（近似）",
         },
         "etf": {"flow_top3": [{"name": "沪深300ETF"}], "premium_anomalies": [{"name": "券商ETF", "premium": 1.5}]},
         "bond": {"gov": {"cn10y_chg_bp": chg10}, "shibor": {"change_bp": dr_chg, "rate": 1.55}, "term_spread": spread},
@@ -50,7 +50,7 @@ def test_cb_valuation_high():
 
 
 def test_missing_data_no_fabrication():
-    """关键数值缺失时应输出'数据不足,暂不解读',绝不臆造。"""
+    """关键数值缺失时应输出「数据不足，暂不解读」，绝不臆造。"""
     d = _data()
     d["equity"]["hs300"]["pct"] = None
     r = analyze.analyze(d)

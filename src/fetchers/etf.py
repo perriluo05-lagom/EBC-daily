@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-"""板块三:ETF焦点(宽基/策略行业涨跌、5日涨跌、资金净流入、规模、溢价异常)。"""
+"""板块三：ETF焦点（宽基/策略行业涨跌、成交额、资金净流入、规模、溢价异常）。"""
 from __future__ import annotations
 
-import datetime as dt
 import logging
 
 from . import base
@@ -25,46 +24,28 @@ def _etf_spot_map() -> dict:
 
 
 def _row_etf(r, code: str, name: str) -> dict:
-    """从 spot 行抽取单只 ETF 字段(含资金净流入/规模)。"""
+    """从 spot 行抽取单只 ETF 字段（含成交额/资金净流入/规模）。
+
+    成交额、换手率等字段直接来自 fund_etf_spot_em 一次全量返回，比逐只拉历史 K 线
+    计算 5 日涨跌可靠得多（历史接口在本地代理环境下常被拦截而缺失）。
+    """
     pct_v = base.to_float(r.get("涨跌幅"))
     price = base.to_float(r.get("最新价"))
-    # 溢价:优先 IOPV,其次基金净值
+    # 溢价：优先 IOPV，其次基金净值
     iopv = base.to_float(r.get("IOPV实时估值")) or base.to_float(r.get("基金净值")) or base.to_float(r.get("净值"))
     premium = (price / iopv - 1) * 100 if (price and iopv) else None
+    turnover = base.to_float(r.get("成交额"))  # 元
     net_flow = base.to_float(r.get("主力净流入-净额"))  # 元
     scale = base.to_float(r.get("流通市值"))  # 元
     return {
         "code": code, "name": name, "pct": pct_v, "price": price,
-        "premium": premium, "net_flow": net_flow, "scale": scale, "source": SRC_EAST,
+        "turnover": turnover, "premium": premium, "net_flow": net_flow,
+        "scale": scale, "source": SRC_EAST,
     }
 
 
-def _etf_5d_pct(code: str) -> float | None:
-    """近5个交易日累计涨跌幅(前复权收盘价计算);不可得返回 None。
-
-    用 fund_etf_hist_em 取最近约15个自然日的日K,取末值与倒数第6个交易日收盘比较。
-    """
-    end = dt.date.today()
-    start = end - dt.timedelta(days=15)
-    df = base.safe(
-        base.ak().fund_etf_hist_em,
-        symbol=code, period="daily",
-        start_date=start.strftime("%Y%m%d"), end_date=end.strftime("%Y%m%d"),
-        adjust="qfq", retries=1,
-    )
-    if df is None or len(df) < 6:
-        return None
-    close_col = "收盘" if "收盘" in df.columns else next(
-        (c for c in df.columns if "收盘" in str(c) or "close" in str(c).lower()), None)
-    if close_col is None:
-        return None
-    c0 = base.to_float(df.iloc[-1][close_col])
-    c5 = base.to_float(df.iloc[-6][close_col])
-    return (c0 / c5 - 1) * 100 if (c0 and c5) else None
-
-
 def _flow_top3() -> list[dict]:
-    """ETF 资金净流入 TOP3(全市场 fund_etf_fund_daily_em)。"""
+    """ETF 资金净流入 TOP3（全市场 fund_etf_fund_daily_em）。"""
     df = base.safe(base.ak().fund_etf_fund_daily_em)
     if df is None or len(df) == 0:
         return []
@@ -99,19 +80,18 @@ def fetch_etf() -> dict:
             r = spot.get(code)
             if r is None:
                 items.append({
-                    "code": code, "name": name, "pct": None, "pct_5d": None,
+                    "code": code, "name": name, "pct": None, "turnover": None,
                     "price": None, "premium": None, "net_flow": None, "scale": None, "source": SRC_EAST,
                 })
                 continue
             item = _row_etf(r, code, name)
-            item["pct_5d"] = base.safe(_etf_5d_pct, code, retries=1)
             items.append(item)
             p = item.get("premium")
             if p is not None and abs(p) > TH_PREMIUM:
                 anomalies.append(item)
         groups[group] = items
 
-    # 国债ETF(供债券板块引用)
+    # 国债ETF（供债券板块引用）
     bond_etfs = []
     for code, name in ETF_BOND_CODES:
         r = spot.get(code)

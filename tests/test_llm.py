@@ -17,10 +17,10 @@ def _data():
                    "zz1000": {"pct": 2.53, "close": 7076, "source": "新浪财经"},
                    "turnover": {"value": 2.5e12, "change_pct": 12.0, "source": "新浪财经"},
                    "advance_decline": {"advancing": 3500, "declining": 1500, "source": "东方财富"},
-                   "style": "小盘相对占优(近似)", "style_source": "新浪财经"},
-        "etf": {"groups": {"宽基": [{"name": "沪深300ETF", "code": "510300", "pct": 1.04, "pct_5d": 2.1,
+                   "style": "小盘相对占优（近似）", "style_source": "新浪财经"},
+        "etf": {"groups": {"宽基": [{"name": "沪深300ETF", "code": "510300", "pct": 1.04, "turnover": 8.5e8,
                                       "premium": 0.1, "net_flow": 1.2e8, "scale": 5e10, "source": "东方财富"}],
-                           "策略行业": [{"name": "半导体ETF", "code": "512480", "pct": 3.55, "pct_5d": 5.2,
+                           "策略行业": [{"name": "半导体ETF", "code": "512480", "pct": 3.55, "turnover": 6.2e8,
                                         "premium": 0.3, "net_flow": 3e8, "scale": 1e10, "source": "东方财富"}]},
                 "bond_etfs": [{"name": "国债ETF", "pct": 0.05, "source": "东方财富"}],
                 "flow_top3": [{"name": "沪深300ETF"}], "premium_anomalies": [], "source": "东方财富"},
@@ -58,7 +58,7 @@ def test_extract_sections_basic():
 
 
 def test_extract_sections_with_submarkers():
-    """@@分析/@@参考 子标记应正确切分,分析按空行分段,参考按前缀提取。"""
+    """@@分析 内容按空行分段；@@参考 已废弃，其内容应被忽略。"""
     txt = (
         "===etf===\n@@分析\n宽基ETF全线收涨。\n\n资金净流入居前。\n"
         "@@参考\n数据事实：沪深300ETF上涨1.04%\n我的参考思路：可以关注资金流向\n今天可以扫一眼的：创业板ETF表现"
@@ -66,9 +66,9 @@ def test_extract_sections_with_submarkers():
     out = llm._extract_sections(txt)
     etf = out["etf"]
     assert etf["analysis"] == ["宽基ETF全线收涨。", "资金净流入居前。"]
-    assert etf["facts"] == "沪深300ETF上涨1.04%"
-    assert etf["idea"] == "可以关注资金流向"
-    assert etf["watch"] == "创业板ETF表现"
+    assert "facts" not in etf  # 参考区不再解析
+    assert "idea" not in etf
+    assert "watch" not in etf
 
 
 def test_extract_sections_case_insensitive():
