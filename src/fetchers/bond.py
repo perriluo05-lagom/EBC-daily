@@ -16,11 +16,13 @@ log = logging.getLogger("ebc.fetchers.bond")
 
 
 def _gov_yields() -> dict:
-    """取中债国债收益率曲线最近两日的 1Y/10Y。"""
+    """取中债国债收益率曲线最近两日的 1Y/10Y。使用缓存。"""
     src = SRC_CBOND
     end = dt.date.today()
     start = end - dt.timedelta(days=30)
-    df = base.safe(
+    cache_key = f"bond_china_yield_{start.strftime('%Y%m%d')}_{end.strftime('%Y%m%d')}"
+    df = base.cached_call(
+        cache_key,
         base.ak().bond_china_yield,
         start_date=start.strftime("%Y%m%d"),
         end_date=end.strftime("%Y%m%d"),

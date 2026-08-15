@@ -24,16 +24,20 @@ def _csi_bond_index(sina_df) -> dict:
 
 
 def _market_stats() -> dict:
-    """全市场均价/平均溢价率/破面数/成交额。"""
+    """全市场均价/平均溢价率/破面数/成交额。使用缓存。"""
     src = SRC_EAST
-    df = base.safe(base.ak().bond_zh_hs_cov_spot)
+    df = base.cached_call("bond_zh_hs_cov_spot", base.ak().bond_zh_hs_cov_spot)
     if df is None or len(df) == 0:
         return {"avg_price": None, "avg_premium": None, "below_par": None, "turnover": None, "source": src}
-    price_col = next((c for c in df.columns if "最新价" in str(c)), None)
-    amount_col = next((c for c in df.columns if "成交额" in str(c)), None)
-    prem_col = next((c for c in df.columns if "溢价" in str(c) and "率" in str(c)), None)
+    
+    # 列名映射（支持中英文列名）
+    price_col = next((c for c in df.columns if "最新价" in str(c) or str(c).lower() in ["trade", "price"]), None)
+    amount_col = next((c for c in df.columns if "成交额" in str(c) or str(c).lower() in ["amount", "turnover"]), None)
+    prem_col = next((c for c in df.columns if ("溢价" in str(c) and "率" in str(c)) or str(c).lower() in ["premiumrate", "premium"]), None)
+    
     if price_col is None:
         return {"avg_price": None, "avg_premium": None, "below_par": None, "turnover": None, "source": src}
+    
     prices = df[price_col].apply(base.to_float).dropna()
     avg_price = float(prices.mean()) if len(prices) else None
     below_par = int((prices < 100).sum()) if len(prices) else None

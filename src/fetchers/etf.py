@@ -11,8 +11,8 @@ log = logging.getLogger("ebc.fetchers.etf")
 
 
 def _etf_spot_map() -> dict:
-    """返回 {代码: row_dict} 来自 fund_etf_spot_em。"""
-    df = base.safe(base.ak().fund_etf_spot_em)
+    """返回 {代码: row_dict} 来自 fund_etf_spot_em。使用缓存避免重复调用。"""
+    df = base.cached_call("fund_etf_spot_em", base.ak().fund_etf_spot_em)
     if df is None or len(df) == 0:
         return {}
     code_col = "代码" if "代码" in df.columns else df.columns[0]

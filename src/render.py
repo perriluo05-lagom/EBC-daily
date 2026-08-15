@@ -83,50 +83,100 @@ def _narrative_block(narrative: dict, section: str, fallback_lines: list[str]) -
 
 
 # ---------------------------------------------------------------------------
-# 一、昨夜今晨概览
+# 一、全球市场概览
 # ---------------------------------------------------------------------------
 def _section_overview(data: dict, interp: dict, narrative: dict) -> list[str]:
     ov = data.get("overview", {})
     dow, nas, sp = ov.get("dow", {}), ov.get("nasdaq", {}), ov.get("sp500", {})
-    u10 = ov.get("us10y", {})
-    a50, oil, gold = ov.get("a50", {}), ov.get("oil", {}), ov.get("gold", {})
+    treasury = ov.get("us_treasury", {})
+    a50 = ov.get("a50", {})
+    oil_wti = ov.get("oil_wti", {})
+    gold = ov.get("gold", {})
+    usd_cny = ov.get("usd_cny", {})
+    
     rows = [
         ["道指", _pct(dow), _num(dow, "close", 0, "点"), _src(dow)],
         ["纳指", _pct(nas), _num(nas, "close", 0, "点"), _src(nas)],
         ["标普500", _pct(sp), _num(sp, "close", 0, "点"), _src(sp)],
-        ["美债10Y", _bp(u10, "change_bp"), _num(u10, "yield", 2, "%"), _src(u10)],
+        ["美债10Y", _bp(treasury, "10y_chg_bp"), _num(treasury, "10y", 2, "%"), _src(treasury)],
+        ["美债2Y", _bp(treasury, "2y_chg_bp"), _num(treasury, "2y", 2, "%"), _src(treasury)],
         ["富时A50", _pct(a50), _num(a50, "close", 0, ""), _src(a50)],
-        ["原油", _pct(oil), _num(oil, "close", 2, ""), _src(oil)],
-        ["黄金", _pct(gold), _num(gold, "close", 2, ""), _src(gold)],
+        ["WTI原油", _pct(oil_wti), _num(oil_wti, "close", 2, "美元/桶"), _src(oil_wti)],
+        ["黄金", _pct(gold), _num(gold, "close", 2, "美元/盎司"), _src(gold)],
+        ["在岸人民币", "", _num(usd_cny, "rate", 4, ""), _src(usd_cny)],
     ]
     lines = [T.SECTION_OVERVIEW, *_table(["品种", "涨跌", "数值", "来源"], rows)]
-    fallback = [T.LABEL_ANALYSIS, "", f"开盘定调：{interp.get('opening_call', '')}"]
+    fallback = [T.LABEL_ANALYSIS, "", ""]
     lines += _narrative_block(narrative, "overview", fallback)
     return lines
 
 
 # ---------------------------------------------------------------------------
-# 二、A股大盘温度
+# 二、A股市场
 # ---------------------------------------------------------------------------
 def _section_equity(data: dict, interp: dict, narrative: dict) -> list[str]:
     eq = data.get("equity", {})
-    hs, zz = eq.get("hs300", {}), eq.get("zz1000", {})
+    indices = eq.get("indices", {})
+    
+    # 核心指数表格（删除北证50）
+    sh50 = indices.get("sh50", {})
+    hs300 = indices.get("hs300", {})
+    zz500 = indices.get("zz500", {})
+    zz1000 = indices.get("zz1000", {})
+    cyb = indices.get("cyb", {})
+    kc50 = indices.get("kc50", {})
+    
     rows = [
-        ["沪深300", _pct(hs), _num(hs, "close", 0, "点"), _src(hs)],
-        ["中证1000", _pct(zz), _num(zz, "close", 0, "点"), _src(zz)],
+        ["上证50", _pct(sh50), _num(sh50, "close", 0, "点"), _src(sh50)],
+        ["沪深300", _pct(hs300), _num(hs300, "close", 0, "点"), _src(hs300)],
+        ["中证500", _pct(zz500), _num(zz500, "close", 0, "点"), _src(zz500)],
+        ["中证1000", _pct(zz1000), _num(zz1000, "close", 0, "点"), _src(zz1000)],
+        ["创业板指", _pct(cyb), _num(cyb, "close", 0, "点"), _src(cyb)],
+        ["科创50", _pct(kc50), _num(kc50, "close", 0, "点"), _src(kc50)],
     ]
     lines = [T.SECTION_EQUITY, *_table(["指数", "昨日涨跌", "收盘", "来源"], rows)]
+    
+    # 成交额
     tv = eq.get("turnover", {})
     vol_str = base.yuan_billion(tv.get("value")) if isinstance(tv, dict) else base.MISSING
     chg_str = base.pct(tv.get("change_pct")) if isinstance(tv, dict) else base.MISSING
     lines.append(_line("全市场成交额", f"{vol_str}、环比 {chg_str}", _src(tv)))
+    
+    # 涨跌家数
     ad = eq.get("advance_decline", {})
     adv = ad.get("advancing") if isinstance(ad, dict) else None
     dec = ad.get("declining") if isinstance(ad, dict) else None
-    ad_txt = f"涨 {adv} / 跌 {dec}" if (adv is not None and dec is not None) else base.MISSING
+    unch = ad.get("unchanged") if isinstance(ad, dict) else None
+    ad_txt = f"涨 {adv} / 跌 {dec} / 平 {unch}" if (adv is not None and dec is not None) else base.MISSING
     lines.append(_line("涨跌家数", ad_txt, _src(ad)))
-    lines.append(_line("风格偏向", eq.get("style", base.MISSING), eq.get("style_source", "")))
-    fallback = [T.LABEL_ANALYSIS, "", f"解读：{interp.get('market_temperature', '')}"]
+    
+    # 涨跌停统计
+    limit_up = ad.get("limit_up") if isinstance(ad, dict) else None
+    limit_down = ad.get("limit_down") if isinstance(ad, dict) else None
+    limit_txt = f"涨停 {limit_up} / 跌停 {limit_down}" if (limit_up is not None and limit_down is not None) else base.MISSING
+    lines.append(_line("涨跌停", limit_txt, _src(ad)))
+    
+    # 行业板块表现
+    sectors = eq.get("sectors", [])
+    if sectors:
+        top_sectors = [s for s in sectors if s.get("rank") == "top"][:3]
+        bottom_sectors = [s for s in sectors if s.get("rank") == "bottom"][:3]
+        
+        if top_sectors:
+            top_txt = "、".join([f"{s.get('name', '')}({s.get('pct', 0):+.2f}%)" for s in top_sectors])
+            lines.append(_line("涨幅前3行业", top_txt, "东方财富"))
+        
+        if bottom_sectors:
+            bottom_txt = "、".join([f"{s.get('name', '')}({s.get('pct', 0):+.2f}%)" for s in bottom_sectors])
+            lines.append(_line("跌幅前3行业", bottom_txt, "东方财富"))
+    
+    # 风格特征
+    style_notes = eq.get("style_notes", [])
+    if style_notes:
+        style_txt = "；".join(style_notes)
+        lines.append(_line("风格特征", style_txt, ""))
+    
+    fallback = [T.LABEL_ANALYSIS, "", ""]
     lines += _narrative_block(narrative, "equity", fallback)
     return lines
 
@@ -135,12 +185,7 @@ def _section_equity(data: dict, interp: dict, narrative: dict) -> list[str]:
 # 三、ETF焦点
 # ---------------------------------------------------------------------------
 def _etf_table(etf: dict) -> list[str]:
-    """ETF 合并表：宽基/策略行业合为一张表，带「组别」列，精简为 6 列。
-
-    用「成交额」替代原「5日涨跌」——成交额直接来自 fund_etf_spot_em 一次全量返回，
-    可靠不缺失；5日涨跌需逐只拉历史K线，本地代理环境下常缺失。保留核心的涨跌 /
-    成交额（流动性）/ 资金净流入。
-    """
+    """ETF 合并表：宽基/策略行业合为一张表，带「组别」列，精简为 6 列。"""
     rows = []
     for gname, items in etf.get("groups", {}).items():
         for it in items:
@@ -158,12 +203,20 @@ def _etf_table(etf: dict) -> list[str]:
 def _section_etf(data: dict, interp: dict, narrative: dict) -> list[str]:
     etf = data.get("etf", {})
     lines = [T.SECTION_ETF, *_etf_table(etf)]
-    fb = []
-    if interp.get("etf_flow_note"):
-        fb.append(f"资金流向：{interp['etf_flow_note']}")
-    if interp.get("etf_premium_note"):
-        fb.append(f"溢价提示：{interp['etf_premium_note']}")
-    fallback = [T.LABEL_ANALYSIS, "", *fb] if fb else []
+    
+    # 资金流向TOP3
+    top3 = etf.get("flow_top3", [])
+    if top3:
+        top3_txt = "、".join([f"{t.get('name', '')}({t.get('net_flow', 0) / 1e8:.2f}亿)" for t in top3])
+        lines.append(_line("资金净流入TOP3", top3_txt, "东方财富"))
+    
+    # 溢价异常
+    anomalies = etf.get("premium_anomalies", [])
+    if anomalies:
+        anom_txt = "、".join([f"{a.get('name', '')}({a.get('premium', 0):+.2f}%)" for a in anomalies[:3]])
+        lines.append(_line("溢价异常", anom_txt, "东方财富"))
+    
+    fallback = [T.LABEL_ANALYSIS, "", ""]
     lines += _narrative_block(narrative, "etf", fallback)
     return lines
 
@@ -186,7 +239,7 @@ def _section_bond(data: dict, interp: dict, narrative: dict) -> list[str]:
     for b in bd.get("bond_etfs", []):
         rows.append([b.get("name", ""), base.pct(b.get("pct")), "—", b.get("source", "")])
     lines = [T.SECTION_BOND, *_table(["指标", "数值", "变动", "来源"], rows)]
-    fallback = [T.LABEL_ANALYSIS, "", f"解读：{interp.get('bond_view', '')}"]
+    fallback = [T.LABEL_ANALYSIS, "", ""]
     lines += _narrative_block(narrative, "bond", fallback)
     return lines
 
@@ -210,13 +263,15 @@ def _section_cb(data: dict, interp: dict, narrative: dict) -> list[str]:
         ["成交额", base.yuan_billion(cb.get("turnover")), cb.get("stats_source", "")],
     ]
     lines = [T.SECTION_CB, *_table(["指标", "数值", "来源"], rows)]
-    fallback = [T.LABEL_ANALYSIS, "", f"解读：{interp.get('cb_valuation', '')}"]
+    
+    # 强赎事件
+    redeem = cb.get("force_redeem", [])
+    if redeem:
+        redeem_txt = "、".join(redeem[:5])
+        lines.append(_line("强赎提示", redeem_txt, cb.get("redeem_source", "")))
+    
+    fallback = [T.LABEL_ANALYSIS, "", ""]
     lines += _narrative_block(narrative, "convertible", fallback)
-    event = interp.get("cb_event_note", "")
-    if event:
-        ev_src = cb.get("redeem_source", "")
-        lines.append("")
-        lines.append(f"事件提示：{event}（来源：{ev_src}）" if ev_src else f"事件提示：{event}")
     return lines
 
 

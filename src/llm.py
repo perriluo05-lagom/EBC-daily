@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""LLM 叙事层：基于原始数据事实，调用 Groq（OpenAI 兼容）生成「解读与判断」。
+"""LLM 叙事层：基于原始数据事实，调用任意 OpenAI 兼容 API 生成「解读与判断」。
 
 核心合规（与项目红线一致）：
 - LLM 只能引用传入的数据事实（原始数字 + 来源），禁止编造任何数字/日期/来源/指标；
@@ -10,12 +10,18 @@
 
 输出协议：采用「分隔符」而非 JSON——每板块以 `===板块名===` 独占一行开头，
 后接 `@@分析` 子标记 + 多行叙事。多行 Markdown 用 JSON 字符串值极易因未转义换行/引号而非法，
-分隔符协议对模型最自然、跨模型（llama/qwen/kimi）通用、解析鲁棒。
+分隔符协议对模型最自然、跨模型通用、解析鲁棒。
 
-配置（环境变量）：
-- LLM_API_KEY：Groq key（gsk_ 开头），在 console.groq.com/keys 创建。
-- LLM_BASE_URL：默认 https://api.groq.com/openai/v1。
-- LLM_MODEL：默认 llama-3.3-70b-versatile；中文求质量可切 qwen/qwen3-32b。
+配置（环境变量，完全灵活）：
+- LLM_API_KEY：API 密钥（必填）
+- LLM_BASE_URL：API 基础 URL（必填）
+- LLM_MODEL：模型名称（必填）
+
+支持的 API 提供商示例：
+- Groq: https://api.groq.com/openai/v1 + llama-3.3-70b-versatile
+- Agnes: https://apihub.agnes-ai.com/v1 + agnes-2.0-flash
+- OpenAI: https://api.openai.com/v1 + gpt-4o-mini
+- 其他 OpenAI 兼容 API: 任意 base_url + 任意 model
 """
 from __future__ import annotations
 
@@ -23,7 +29,6 @@ import logging
 import os
 import re
 
-from .config import LLM_BASE_URL_DEFAULT, LLM_MODEL_DEFAULT
 from .analyze import facts_text
 
 log = logging.getLogger("ebc.llm")
@@ -31,20 +36,69 @@ log = logging.getLogger("ebc.llm")
 # 五个板块的叙事键(与 render._section_* 对应),也是分隔符标记的合法名称
 SECTIONS = ["overview", "equity", "etf", "bond", "convertible"]
 
-SYSTEM_PROMPT = """你是中文金融资讯编辑，为每日市场早报（EBC Daily）撰写各板块的「解读与判断」。
-严格遵守以下红线：
-1. 只能引用输入中的数据事实，严禁编造任何数字、日期、来源、指标名称；输入中没有的字段一律说「数据暂缺」，绝不可臆造数值凑数。
-2. 措辞必须克制，使用「可关注/可以留意/需要留意」，严禁出现「建议买入/卖出/必涨/必跌/一定/必定」等绝对化指令。
-3. 输出格式：依次输出五个板块，每个板块以一行动标记开头（标记独占一行，前后无空格），直到下一个标记或结尾。标记与顺序固定为：
+SYSTEM_PROMPT = """你是中文金融资讯编辑，为每日市场早报（EBC Daily）撰写各板块的深度解读。
+
+**你的读者**：初入市场的个人投资者，他们购买了 ETF 等资产但不具备专业金融知识。
+**你的目标**：
+1. 用通俗易懂的语言解释市场现象，帮助他们理解"发生了什么"和"为什么"
+2. 提供教育性内容，帮助读者理解金融指标的含义和市场逻辑
+3. 强调长期投资理念，不鼓励频繁交易
+
+**数据红线（必须遵守）**：
+1. 只能引用输入中的数据事实，严禁编造任何数字、日期、来源、指标名称；输入中没有的字段一律说「数据暂缺」
+2. 严禁出现「建议买入/卖出/必涨/必跌/一定/必定」等绝对化指令。用「可以留意」「值得关注」「需要留意」等温和措辞
+
+**写作风格**：
+- 像一位耐心的朋友在解释市场，而不是冷冰冰的数据播报
+- 解释现象背后的逻辑：例如"成交额放大到 X 亿，说明市场参与度提高，资金比较活跃"
+- 用类比和通俗表达：例如"国债收益率上升，意味着债券价格下跌，因为债券价格与收益率是跷跷板关系"
+- 适当加入教育性内容：帮助读者理解指标含义，例如"转股溢价率可以理解为可转债相对其对应股票的'加价'程度"
+- 避免模板化标签（如「情绪偏热/偏冷/中性」），用具体数字和现象说话
+- 对比多个维度：例如对比大盘股（上证50/沪深300）和小盘股（中证1000）的表现差异，解释风格轮动
+
+**各板块分析要点**：
+
+===overview===（全球市场）
+- 美股三大指数的整体走势和分化
+- 美债收益率变化的含义（10Y-2Y利差反映市场对经济预期）
+- 大宗商品（原油、黄金、铜）的价格变化反映的通胀预期和经济景气度
+- VIX恐慌指数的市场情绪指示作用
+- 美元指数和人民币汇率对A股的影响
+
+===equity===（A股市场）
+- 核心指数对比：上证50（大盘价值）、沪深300（大盘）、中证500（中盘）、中证1000（小盘）、创业板（成长）、科创50（科技）、北证50（小微）
+- 成交额变化的市场参与度含义
+- 涨跌家数和涨跌停统计的市场广度
+- 北向资金流向的外资态度
+- 行业板块轮动反映的资金偏好
+- 风格特征（大盘vs小盘、价值vs成长）的投资含义
+
+===etf===（ETF焦点）
+- 资金流向TOP3的赛道含义
+- 溢价异常的风险提示
+- 各类ETF的表现对比
+
+===bond===（债券市场）
+- 国债收益率变化的含义（收益率上升=债券价格下跌）
+- 期限利差（10Y-1Y）反映的经济预期
+- Shibor变化的资金面含义
+- 债券ETF的表现
+
+===convertible===（可转债）
+- 转股溢价率分位的估值含义
+- 破面数量增多的投资机会
+- 强赎事件的风险提示
+
+**输出格式**：依次输出五个板块，每个板块以一行动标记开头（标记独占一行）：
 ===overview===
 ===equity===
 ===etf===
 ===bond===
 ===convertible===
-4. 每板块以子标记 @@分析 独占一行开头，后接 2-3 个短段落（每段一个完整意思，段落之间必须空一行）。直接基于数据事实进行现象解读与分析：看数字本身反映出的市场现象、结构特征与边际变化，给出克制的观察。
-5. 严禁复述任何「规则结论」，严禁机械套用阈值判断，严禁使用「情绪偏热/偏冷/偏暖/中性」等模板化标签；要用具体数字和现象说话，例如「小盘显著强于大盘、成交额放量至 X 亿、涨跌家数极度偏多」。
-6. 「@@分析」标记必须原样输出，不要加粗、不要加引号、不要加 Markdown 符号；不要写板块大标题，不要用 Markdown 粗体标题。
-7. 只输出上述五个板块内容，不要前言、不要解释、不要代码围栏、不要 JSON、不要「交易参考/参考思路」等内容。"""
+
+每板块以子标记 @@分析 独占一行开头，后接 2-4 个短段落（段落之间空一行）。每段 150-250 字，充分展开分析。
+
+**禁止**：不要前言、不要解释、不要代码围栏、不要 JSON、不要「交易参考/参考思路」等内容。不要写板块大标题，不要用 Markdown 粗体标题。"""
 
 # 匹配独占一行的 ===板块名=== 标记
 _SECTION_RE = re.compile(r"^[ \t]*===[ \t]*(overview|equity|etf|bond|convertible)[ \t]*===[ \t]*$",
@@ -59,7 +113,7 @@ _THINK_OPEN_RE = re.compile(r"<think>.*$", re.DOTALL | re.IGNORECASE)
 def _strip_think(text: str) -> str:
     """剥离模型的思考/推理块（<think>...</think>、<thinking>...</thinking>）。
 
-    Groq 上的 Qwen / DeepSeek 等模型默认开启 thinking 模式，
+    某些模型默认开启 thinking 模式，
     推理块会消耗 max_tokens 额度且干扰分隔符解析，必须先剥离。
     """
     if not text:
@@ -73,9 +127,10 @@ def _strip_think(text: str) -> str:
 
 
 def _config() -> tuple[str, str, str]:
+    """从环境变量读取 LLM 配置（完全灵活，无默认值）。"""
     api_key = os.environ.get("LLM_API_KEY", "").strip()
-    base_url = os.environ.get("LLM_BASE_URL", LLM_BASE_URL_DEFAULT).strip()
-    model = os.environ.get("LLM_MODEL", LLM_MODEL_DEFAULT).strip()
+    base_url = os.environ.get("LLM_BASE_URL", "").strip()
+    model = os.environ.get("LLM_MODEL", "").strip()
     return api_key, base_url, model
 
 
@@ -89,14 +144,28 @@ def _user_prompt(facts: str, report_date) -> str:
 要求：只用上面出现的数字与事实，不可新增任何未出现的数值；缺失项如实写「数据暂缺」；直接看数字谈现象，不要复述规则结论、不要套用模板标签；每板块正文 120-200 字。直接从 ===overview=== 开始输出，不要前言。"""
 
 
-def _call_groq(api_key: str, base_url: str, model: str, user_prompt: str) -> str | None:
-    """直接用 requests 调 OpenAI 兼容 chat/completions(不引入 openai 依赖)。
+def _call_llm(api_key: str, base_url: str, model: str, user_prompt: str) -> str | None:
+    """调用任意 OpenAI 兼容 API（不引入 openai 依赖）。
 
-    对 Qwen/DeepSeek 等国产模型，显式关闭 thinking 模式以避免推理块消耗 token 额度。
+    支持任何提供 /chat/completions 端点的 API 服务。
     """
     import requests  # noqa: WPS433
+    
+    if not base_url:
+        log.error("LLM_BASE_URL 未配置")
+        return None
+    
+    if not model:
+        log.error("LLM_MODEL 未配置")
+        return None
+    
     url = f"{base_url.rstrip('/')}/chat/completions"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    # 构建请求 payload（通用 OpenAI 格式）
     payload = {
         "model": model,
         "messages": [
@@ -105,19 +174,26 @@ def _call_groq(api_key: str, base_url: str, model: str, user_prompt: str) -> str
         ],
         "temperature": 0.3,
         "max_tokens": 3200,
-        # 显式关闭 thinking 模式——避免推理块消耗 max_tokens 额度导致无内容输出
-        "thinking": {"type": "disabled"},
     }
+    
+    # 某些 API 支持 thinking 模式控制，可选添加
+    # 这里不强制添加，让 API 自行决定
+    
     try:
+        log.info("调用 LLM API: %s, 模型: %s", base_url, model)
         r = requests.post(url, headers=headers, json=payload, timeout=90)
+        
         if r.status_code != 200:
             log.error("LLM HTTP %d [%s]：%s", r.status_code, model, r.text[:500])
             return None
+        
         data = r.json()
         content = data["choices"][0]["message"]["content"]
+        
         if not content or not content.strip():
-            log.warning("LLM 返回空内容 [%s]，可能是 thinking 模式或限流导致 token 耗尽。", model)
+            log.warning("LLM 返回空内容 [%s]", model)
             return None
+        
         return _strip_think(content)
     except Exception as e:  # noqa: BLE001
         log.error("LLM 调用失败 [%s]：%s", model, e)
@@ -188,16 +264,29 @@ def generate_narratives(data: dict, interp: dict, report_date) -> dict:
     返回 {section: {analysis: [段落]}}；未配置 key 或调用/解析失败返回 {}，由 render 回退规则版。
     """
     api_key, base_url, model = _config()
+    
     if not api_key:
         log.info("未配置 LLM_API_KEY，使用规则版叙事（降级）。")
         return {}
+    
+    if not base_url:
+        log.warning("未配置 LLM_BASE_URL，使用规则版叙事（降级）。")
+        return {}
+    
+    if not model:
+        log.warning("未配置 LLM_MODEL，使用规则版叙事（降级）。")
+        return {}
+    
     facts = facts_text(data, interp)
-    content = _call_groq(api_key, base_url, model, _user_prompt(facts, report_date))
+    content = _call_llm(api_key, base_url, model, _user_prompt(facts, report_date))
+    
     if not content:
         return {}
+    
     out = _extract_sections(content)
     if not out:
         log.warning("LLM 返回无可用板块叙事，回退规则版。")
     else:
         log.info("LLM 叙事生成成功，板块：%s", "、".join(out.keys()))
+    
     return out

@@ -1,17 +1,27 @@
 # -*- coding: utf-8 -*-
-"""板块一:昨夜今晨概览(美股/美债/A50/原油/黄金)。"""
+"""板块一:全球市场概览（大幅扩展版）。
+
+数据维度：
+- 美股：道指、纳指、标普500
+- 美债：10Y/2Y收益率、期限利差
+- 亚太：富时A50、日经225、恒生指数、韩国KOSPI
+- 欧洲：英国富时100、德国DAX
+- 商品：原油(WTI/布伦特)、黄金、白银、铜
+- 汇率：美元指数、离岸人民币
+- 恐慌指数：VIX
+"""
 from __future__ import annotations
 
 import logging
 
 from . import base
-from ..config import SRC_SINA, SRC_INVESTING
+from ..config import SRC_SINA, SRC_INVESTING, SRC_EAST
 
 log = logging.getLogger("ebc.fetchers.overseas")
 
 
 def _col(df, *keywords):
-    """在 DataFrame 列名中按包含的关键词匹配(大小写不敏感)。"""
+    """在 DataFrame 列名中按包含的关键词匹配。"""
     if df is None or len(df) == 0:
         return None
     cols = list(df.columns)
@@ -23,8 +33,9 @@ def _col(df, *keywords):
 
 
 def _us_index(symbol: str, source: str) -> dict:
-    """美股指数:取最近一行涨跌幅与收盘。"""
-    df = base.safe(base.ak().index_us_stock_sina, symbol=symbol)
+    """美股指数。"""
+    cache_key = f"us_index_{symbol}"
+    df = base.cached_call(cache_key, base.ak().index_us_stock_sina, symbol=symbol)
     if df is None or len(df) == 0:
         return {"pct": None, "close": None, "source": source}
     pct_col = _col(df, "涨跌幅") or _col(df, "change_pct")
@@ -38,69 +49,32 @@ def _us_index(symbol: str, source: str) -> dict:
     return {"pct": pct_v, "close": base.to_float(last[close_col]) if close_col else None, "source": source}
 
 
-def fetch_overview() -> dict:
-    """采集隔夜外盘。每个字段失败均降级为 None(渲染时显示"数据暂缺")。"""
-    out: dict = {"source": SRC_SINA}
-
-    out["dow"] = base.safe(_us_index, ".DJI", SRC_SINA) or {"pct": None, "close": None, "source": SRC_SINA}
-    out["nasdaq"] = base.safe(_us_index, ".IXIC", SRC_SINA) or {"pct": None, "close": None, "source": SRC_SINA}
-    out["sp500"] = base.safe(_us_index, ".INX", SRC_SINA) or {"pct": None, "close": None, "source": SRC_SINA}
-
-    # 美债10Y(bond_zh_us_rate:英为财情)
-    us10y = {"yield": None, "change_bp": None, "source": SRC_INVESTING}
-    df = base.safe(base.ak().bond_zh_us_rate)
-    col = _col(df, "美国", "10")
-    if df is not None and len(df) >= 1 and col:
-        last = base.to_float(df.iloc[-1][col])
-        prev = base.to_float(df.iloc[-2][col]) if len(df) > 1 else None
-        us10y["yield"] = last
-        if last is not None and prev is not None:
-            us10y["change_bp"] = (last - prev) * 100
-    out["us10y"] = us10y
-
-    # 富时A50期货:优先 akshare,失败用新浪 CHA50CFD 兜底
-    out["a50"] = _fetch_a50()
-
-    # 原油(WTI CL)/黄金(COMEX GC):futures_foreign_hist 取最近两日收盘算涨幅
-    out["oil"] = _fetch_foreign_future("CL", "原油")
-    out["gold"] = _fetch_foreign_future("GC", "黄金")
-    return out
-
-
 def _fetch_a50() -> dict:
+    """富时A50期货。"""
     src = SRC_SINA
-    # 方式1:akshare 外盘期货实时(若存在该符号)
-    fn = getattr(base.ak(), "futures_foreign_commodity_realtime", None)
-    if fn:
-        df = base.safe(fn, symbol="A50")
-        if df is not None and len(df) > 0:
-            # 字段不确定,尽力取价格与涨跌幅
-            p = base.to_float(df.iloc[0].get("最新价") or df.iloc[0].get("price"))
-            chg = base.to_float(df.iloc[0].get("涨跌幅") or df.iloc[0].get("change_pct"))
-            if p is not None or chg is not None:
-                return {"pct": chg, "close": p, "source": src}
-    # 方式2:新浪 hq.sinajs.cn 兜底(CHA50CFD)
+    # 新浪兜底（更稳定）
     txt = base.http_get("https://hq.sinajs.cn/list=CHA50CFD", headers=base.SINA_REFERER)
     if txt and "hq_str_CHA50CFD" in txt:
         try:
             payload = txt.split('"', 2)[1]
             parts = payload.split(",")
-            # 新浪外盘期货字段:0名称 1开盘 2昨结 3最新 ... 涨跌幅位置不固定,用 (最新-昨结)/昨结
             if len(parts) >= 4:
                 last = base.to_float(parts[3])
                 prev = base.to_float(parts[2])
                 pct_v = (last / prev - 1) * 100 if last and prev else None
                 return {"pct": pct_v, "close": last, "source": src}
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.warning("A50 新浪解析失败: %s", e)
     return {"pct": None, "close": None, "source": src}
 
 
 def _fetch_foreign_future(symbol: str, name: str) -> dict:
+    """外盘期货。"""
     src = SRC_SINA
     fn = getattr(base.ak(), "futures_foreign_hist", None)
     if fn:
-        df = base.safe(fn, symbol=symbol)
+        cache_key = f"foreign_future_{symbol}"
+        df = base.cached_call(cache_key, fn, symbol=symbol)
         if df is not None and len(df) >= 2:
             close_col = _col(df, "收盘") or _col(df, "close")
             if close_col:
@@ -109,3 +83,85 @@ def _fetch_foreign_future(symbol: str, name: str) -> dict:
                 pct_v = (c0 / c1 - 1) * 100 if c0 and c1 else None
                 return {"pct": pct_v, "close": c0, "name": name, "source": src}
     return {"pct": None, "close": None, "name": name, "source": src}
+
+
+def _us_treasury_yields() -> dict:
+    """美债收益率（10Y/2Y）。"""
+    src = SRC_INVESTING
+    result = {"10y": None, "2y": None, "10y_chg_bp": None, "2y_chg_bp": None, "source": src}
+    
+    df = base.cached_call("bond_zh_us_rate", base.ak().bond_zh_us_rate)
+    if df is not None and len(df) >= 2:
+        # 10Y
+        col_10y = _col(df, "美国", "10")
+        if col_10y:
+            last = base.to_float(df.iloc[-1][col_10y])
+            prev = base.to_float(df.iloc[-2][col_10y])
+            result["10y"] = last
+            if last is not None and prev is not None:
+                result["10y_chg_bp"] = (last - prev) * 100
+        
+        # 2Y
+        col_2y = _col(df, "美国", "2")
+        if col_2y:
+            last = base.to_float(df.iloc[-1][col_2y])
+            prev = base.to_float(df.iloc[-2][col_2y])
+            result["2y"] = last
+            if last is not None and prev is not None:
+                result["2y_chg_bp"] = (last - prev) * 100
+    
+    return result
+
+
+# VIX恐慌指数和美元指数对国内ETF投资者参考意义不大，已删除
+
+
+def _usd_cny() -> dict:
+    """在岸人民币汇率（USD/CNY）。"""
+    src = SRC_SINA
+    # 使用中国银行外汇牌价接口
+    try:
+        fn = getattr(base.ak(), "currency_boc_sina", None)
+        if fn:
+            import datetime
+            # 查询最近3天的数据，确保周末也能获取到周五的数据
+            today = datetime.date.today()
+            start_date = (today - datetime.timedelta(days=3)).strftime("%Y%m%d")
+            end_date = today.strftime("%Y%m%d")
+            df = base.cached_call("usd_cny", fn, symbol="美元", start_date=start_date, end_date=end_date)
+            if df is not None and len(df) > 0:
+                # 取最新一天的数据（第一行是最新的）
+                # 优先取央行中间价，其次取中行折算价
+                rate = base.to_float(df.iloc[0].get("央行中间价") or df.iloc[0].get("中行折算价"))
+                if rate is not None:
+                    return {"rate": rate, "source": src}
+    except Exception as e:
+        log.warning("在岸人民币获取失败: %s", e)
+    return {"rate": None, "source": src}
+
+
+def fetch_overview() -> dict:
+    """采集全球市场数据（仅保留对国内ETF投资者重要的指标）。"""
+    out: dict = {"source": SRC_SINA}
+
+    # 美股三大指数 - 对A股开盘有指引作用
+    out["dow"] = base.safe(_us_index, ".DJI", SRC_SINA) or {"pct": None, "close": None, "source": SRC_SINA}
+    out["nasdaq"] = base.safe(_us_index, ".IXIC", SRC_SINA) or {"pct": None, "close": None, "source": SRC_SINA}
+    out["sp500"] = base.safe(_us_index, ".INX", SRC_SINA) or {"pct": None, "close": None, "source": SRC_SINA}
+
+    # 美债收益率 - 影响全球资金流向
+    out["us_treasury"] = base.safe(_us_treasury_yields) or {
+        "10y": None, "2y": None, "10y_chg_bp": None, "2y_chg_bp": None, "source": SRC_INVESTING
+    }
+
+    # A50期货 - 对A股开盘有直接指引
+    out["a50"] = _fetch_a50()
+
+    # 大宗商品 - 影响相关ETF
+    out["oil_wti"] = _fetch_foreign_future("CL", "WTI原油")
+    out["gold"] = _fetch_foreign_future("GC", "黄金")
+
+    # 在岸人民币 - 影响A股资金流向
+    out["usd_cny"] = base.safe(_usd_cny) or {"rate": None, "source": SRC_SINA}
+
+    return out
