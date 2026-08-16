@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""板块二:A股大盘温度（大幅扩展版）。
+"""板块二:A股大盘温度。
 
 数据维度：
-- 核心指数：上证50、沪深300、中证500、中证1000、创业板指、科创50、北证50
-- 市场情绪：涨跌家数、涨跌停统计、成交额及环比
-- 资金流向：北向资金净流入
+- 核心指数：上证50、沪深300、中证500、中证1000、创业板指、科创50
+- 市场成交：全市场成交额
 - 风格判断：大小盘对比、价值成长对比
 """
 from __future__ import annotations
@@ -39,28 +38,6 @@ def _index_spot(sina_df, code: str) -> dict:
     }
 
 
-def _prev_turnover_from_em() -> float | None:
-    """用东方财富 index_daily_em 取上一交易日成交额。"""
-    total = 0.0
-    got = 0
-    for code in (INDEX_CODES["上证综指"], INDEX_CODES["深证综指"]):
-        prefix = INDEX_SYMBOL_PREFIX.get(code, "sh")
-        cache_key = f"index_daily_em_{prefix}{code}"
-        df = base.cached_call(cache_key, base.ak().stock_zh_index_daily_em, symbol=f"{prefix}{code}")
-        if df is None or len(df) < 2:
-            continue
-        col = "成交额" if "成交额" in df.columns else next((c for c in df.columns if "成交额" in str(c)), None)
-        if col is None:
-            continue
-        v = base.to_float(df.iloc[-2][col])
-        if v is not None:
-            total += v
-            got += 1
-    if got < 2:
-        return None
-    return total
-
-
 def _market_turnover(sina_df) -> dict:
     """全市场成交额 = 上证综指 + 深证综指 成交额。"""
     sh = _sina_row(sina_df, INDEX_CODES["上证综指"])
@@ -68,44 +45,7 @@ def _market_turnover(sina_df) -> dict:
     t_sh = base.to_float(sh.get("成交额")) if sh is not None else None
     t_sz = base.to_float(sz.get("成交额")) if sz is not None else None
     today = (t_sh + t_sz) if (t_sh is not None and t_sz is not None) else None
-    prev = base.safe(_prev_turnover_from_em)
-    change = (today / prev - 1) * 100 if (today and prev) else None
-    return {"value": today, "prev": prev, "change_pct": change, "source": SRC_SINA}
-
-
-def _advance_decline() -> dict:
-    """全市场涨跌家数、涨跌停统计。"""
-    df = base.cached_call("stock_zh_a_spot_em", base.ak().stock_zh_a_spot_em)
-    if df is None or len(df) == 0:
-        return {
-            "advancing": None, "declining": None, "unchanged": None,
-            "limit_up": None, "limit_down": None, "source": SRC_EAST
-        }
-    
-    col = "涨跌幅" if "涨跌幅" in df.columns else None
-    if col is None:
-        return {
-            "advancing": None, "declining": None, "unchanged": None,
-            "limit_up": None, "limit_down": None, "source": SRC_EAST
-        }
-    
-    pcts = df[col].apply(base.to_float)
-    adv = int((pcts > 0).sum())
-    dec = int((pcts < 0).sum())
-    unch = int((pcts == 0).sum())
-    
-    # 涨跌停统计（A股主板10%，创业板/科创板20%）
-    # 简化处理：涨幅>=9.8%视为涨停，跌幅<=-9.8%视为跌停
-    limit_up = int((pcts >= 9.8).sum())
-    limit_down = int((pcts <= -9.8).sum())
-    
-    return {
-        "advancing": adv, "declining": dec, "unchanged": unch,
-        "limit_up": limit_up, "limit_down": limit_down, "source": SRC_EAST
-    }
-
-
-# 北向资金数据源已失效（akshare 返回 NaN），已删除
+    return {"value": today, "source": SRC_SINA}
 
 
 def _sector_performance() -> list[dict]:
@@ -164,12 +104,6 @@ def fetch_equity(sina_df) -> dict:
     # 市场成交
     turnover = _market_turnover(sina_df)
     
-    # 涨跌家数
-    ad = base.safe(_advance_decline) or {
-        "advancing": None, "declining": None, "unchanged": None,
-        "limit_up": None, "limit_down": None, "source": SRC_EAST
-    }
-    
     # 行业板块
     sectors = base.safe(_sector_performance) or []
     
@@ -199,7 +133,6 @@ def fetch_equity(sina_df) -> dict:
     return {
         "indices": indices,
         "turnover": turnover,
-        "advance_decline": ad,
         "sectors": sectors,
         "style_notes": style_notes,
     }

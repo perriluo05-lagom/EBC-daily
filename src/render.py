@@ -89,7 +89,6 @@ def _section_overview(data: dict, interp: dict, narrative: dict) -> list[str]:
     ov = data.get("overview", {})
     dow, nas, sp = ov.get("dow", {}), ov.get("nasdaq", {}), ov.get("sp500", {})
     treasury = ov.get("us_treasury", {})
-    a50 = ov.get("a50", {})
     oil_wti = ov.get("oil_wti", {})
     gold = ov.get("gold", {})
     usd_cny = ov.get("usd_cny", {})
@@ -100,7 +99,6 @@ def _section_overview(data: dict, interp: dict, narrative: dict) -> list[str]:
         ["标普500", _pct(sp), _num(sp, "close", 0, "点"), _src(sp)],
         ["美债10Y", _bp(treasury, "10y_chg_bp"), _num(treasury, "10y", 2, "%"), _src(treasury)],
         ["美债2Y", _bp(treasury, "2y_chg_bp"), _num(treasury, "2y", 2, "%"), _src(treasury)],
-        ["富时A50", _pct(a50), _num(a50, "close", 0, ""), _src(a50)],
         ["WTI原油", _pct(oil_wti), _num(oil_wti, "close", 2, "美元/桶"), _src(oil_wti)],
         ["黄金", _pct(gold), _num(gold, "close", 2, "美元/盎司"), _src(gold)],
         ["在岸人民币", "", _num(usd_cny, "rate", 4, ""), _src(usd_cny)],
@@ -118,7 +116,7 @@ def _section_equity(data: dict, interp: dict, narrative: dict) -> list[str]:
     eq = data.get("equity", {})
     indices = eq.get("indices", {})
     
-    # 核心指数表格（删除北证50）
+    # 核心指数表格
     sh50 = indices.get("sh50", {})
     hs300 = indices.get("hs300", {})
     zz500 = indices.get("zz500", {})
@@ -136,25 +134,10 @@ def _section_equity(data: dict, interp: dict, narrative: dict) -> list[str]:
     ]
     lines = [T.SECTION_EQUITY, *_table(["指数", "昨日涨跌", "收盘", "来源"], rows)]
     
-    # 成交额
+    # 成交额（仅显示绝对值，不显示环比）
     tv = eq.get("turnover", {})
     vol_str = base.yuan_billion(tv.get("value")) if isinstance(tv, dict) else base.MISSING
-    chg_str = base.pct(tv.get("change_pct")) if isinstance(tv, dict) else base.MISSING
-    lines.append(_line("全市场成交额", f"{vol_str}、环比 {chg_str}", _src(tv)))
-    
-    # 涨跌家数
-    ad = eq.get("advance_decline", {})
-    adv = ad.get("advancing") if isinstance(ad, dict) else None
-    dec = ad.get("declining") if isinstance(ad, dict) else None
-    unch = ad.get("unchanged") if isinstance(ad, dict) else None
-    ad_txt = f"涨 {adv} / 跌 {dec} / 平 {unch}" if (adv is not None and dec is not None) else base.MISSING
-    lines.append(_line("涨跌家数", ad_txt, _src(ad)))
-    
-    # 涨跌停统计
-    limit_up = ad.get("limit_up") if isinstance(ad, dict) else None
-    limit_down = ad.get("limit_down") if isinstance(ad, dict) else None
-    limit_txt = f"涨停 {limit_up} / 跌停 {limit_down}" if (limit_up is not None and limit_down is not None) else base.MISSING
-    lines.append(_line("涨跌停", limit_txt, _src(ad)))
+    lines.append(_line("全市场成交额", vol_str, _src(tv)))
     
     # 行业板块表现
     sectors = eq.get("sectors", [])
@@ -249,16 +232,10 @@ def _section_bond(data: dict, interp: dict, narrative: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 def _section_cb(data: dict, interp: dict, narrative: dict) -> list[str]:
     cb = data.get("convertible", {})
-    csi = cb.get("csi_index", {})
     avg_p = cb.get("avg_price")
-    avg_prem = cb.get("avg_premium")
-    pctile = cb.get("premium_percentile_3y")
     below = cb.get("below_par")
     rows = [
-        ["中证转债指数", f"{_pct(csi)}（{_num(csi, 'close', 0, '点')}）", _src(csi)],
         ["全市场均价", f"{avg_p:.2f}元" if avg_p is not None else base.MISSING, cb.get("stats_source", "")],
-        ["平均转股溢价率", f"{avg_prem:.1f}%" if avg_prem is not None else base.MISSING, cb.get("stats_source", "")],
-        ["溢价率近3年分位", f"{pctile:.0f}%" if pctile is not None else base.MISSING, cb.get("stats_source", "")],
         ["破面只数", f"{int(below)}只" if below is not None else base.MISSING, cb.get("stats_source", "")],
         ["成交额", base.yuan_billion(cb.get("turnover")), cb.get("stats_source", "")],
     ]

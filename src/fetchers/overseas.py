@@ -1,14 +1,11 @@
 # -*- coding: utf-8 -*-
-"""板块一:全球市场概览（大幅扩展版）。
+"""板块一:全球市场概览。
 
 数据维度：
 - 美股：道指、纳指、标普500
-- 美债：10Y/2Y收益率、期限利差
-- 亚太：富时A50、日经225、恒生指数、韩国KOSPI
-- 欧洲：英国富时100、德国DAX
-- 商品：原油(WTI/布伦特)、黄金、白银、铜
-- 汇率：美元指数、离岸人民币
-- 恐慌指数：VIX
+- 美债：10Y/2Y收益率
+- 商品：WTI原油、黄金
+- 汇率：在岸人民币
 """
 from __future__ import annotations
 
@@ -47,25 +44,6 @@ def _us_index(symbol: str, source: str) -> dict:
         c0, c1 = base.to_float(last[close_col]), base.to_float(prev[close_col])
         pct_v = (c0 / c1 - 1) * 100 if c0 and c1 else None
     return {"pct": pct_v, "close": base.to_float(last[close_col]) if close_col else None, "source": source}
-
-
-def _fetch_a50() -> dict:
-    """富时A50期货。"""
-    src = SRC_SINA
-    # 新浪兜底（更稳定）
-    txt = base.http_get("https://hq.sinajs.cn/list=CHA50CFD", headers=base.SINA_REFERER)
-    if txt and "hq_str_CHA50CFD" in txt:
-        try:
-            payload = txt.split('"', 2)[1]
-            parts = payload.split(",")
-            if len(parts) >= 4:
-                last = base.to_float(parts[3])
-                prev = base.to_float(parts[2])
-                pct_v = (last / prev - 1) * 100 if last and prev else None
-                return {"pct": pct_v, "close": last, "source": src}
-        except Exception as e:
-            log.warning("A50 新浪解析失败: %s", e)
-    return {"pct": None, "close": None, "source": src}
 
 
 def _fetch_foreign_future(symbol: str, name: str) -> dict:
@@ -153,9 +131,6 @@ def fetch_overview() -> dict:
     out["us_treasury"] = base.safe(_us_treasury_yields) or {
         "10y": None, "2y": None, "10y_chg_bp": None, "2y_chg_bp": None, "source": SRC_INVESTING
     }
-
-    # A50期货 - 对A股开盘有直接指引
-    out["a50"] = _fetch_a50()
 
     # 大宗商品 - 影响相关ETF
     out["oil_wti"] = _fetch_foreign_future("CL", "WTI原油")

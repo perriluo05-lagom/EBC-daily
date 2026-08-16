@@ -6,7 +6,7 @@
   python main.py --dry-run      # 不判交易日、不发邮件,打印 Markdown 并写入 output/
   python main.py --dry-run --date 2026-07-31   # 指定报告日期
   python main.py --weekly       # 生成周报（周五时）
-  python main.py --biweekly     # 生成双周报（每两周的周五）
+  python main.py --monthly      # 生成月报（每月最后一个周五）
   python main.py --clean        # 清理旧的输出文件
 """
 from __future__ import annotations
@@ -106,7 +106,7 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="不发邮件,输出到 stdout 与 output/")
     parser.add_argument("--date", help="报告日期 YYYY-MM-DD(默认今天)")
     parser.add_argument("--weekly", action="store_true", help="生成周报（周五时）")
-    parser.add_argument("--biweekly", action="store_true", help="生成双周报（每两周的周五）")
+    parser.add_argument("--monthly", action="store_true", help="生成月报（每月最后一个周五）")
     parser.add_argument("--clean", action="store_true", help="清理旧的输出文件")
     args = parser.parse_args()
 
@@ -126,20 +126,23 @@ def main() -> int:
         log.info("清理完成: 删除 %d 个文件, 保留 %d 个文件", stats["deleted"], stats["kept"])
         return 0
 
-    # 处理周报/双周报
-    if args.weekly or args.biweekly:
-        is_biweekly = args.biweekly
-        if not weekly_report.should_generate_weekly_report(report_date, is_biweekly):
-            log.info("%s 不是生成%s报的时间（需要是周五）", report_date, "双周" if is_biweekly else "周")
+    # 处理周报/月报
+    if args.weekly or args.monthly:
+        is_monthly = args.monthly
+        if not weekly_report.should_generate_weekly_report(report_date, is_monthly):
+            if is_monthly:
+                log.info("%s 不是生成月报的时间（需要是每月最后一个周五）", report_date)
+            else:
+                log.info("%s 不是生成周报的时间（需要是周五）", report_date)
             return 0
         
-        log.info("生成%s报: %s", "双周" if is_biweekly else "周", report_date)
-        md = weekly_report.generate_weekly_report(report_date, is_biweekly)
+        log.info("生成%s报: %s", "月" if is_monthly else "周", report_date)
+        md = weekly_report.generate_weekly_report(report_date, is_monthly)
         
         if args.dry_run:
             out_dir = Path(__file__).resolve().parent / "output"
             out_dir.mkdir(exist_ok=True)
-            period = "biweekly" if is_biweekly else "weekly"
+            period = "monthly" if is_monthly else "weekly"
             stem = f"EBC-{period}-{report_date.strftime('%Y-%m-%d')}"
             md_file = out_dir / f"{stem}.md"
             html_file = out_dir / f"{stem}.html"
@@ -149,7 +152,7 @@ def main() -> int:
             print(f"\n[dry-run] 已写入 {md_file} 与 {html_file}", file=sys.stderr)
             return 0
         
-        subject = f"【EBC {'双周' if is_biweekly else '周'}报】{report_date.strftime('%Y-%m-%d')}"
+        subject = f"【EBC {'月' if is_monthly else '周'}报】{report_date.strftime('%Y-%m-%d')}"
         ok = emailer.send(subject, md)
         return 0 if ok else 1
 

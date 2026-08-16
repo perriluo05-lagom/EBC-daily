@@ -91,17 +91,13 @@ def _facts_global_market(data: dict) -> list[str]:
     L.append(f"- 美债10Y收益率：{_fn(treasury, '10y', 2, '%')}（变动{_fb(treasury, '10y_chg_bp')}）（来源：{_fs(treasury)}）")
     L.append(f"- 美债2Y收益率：{_fn(treasury, '2y', 2, '%')}（变动{_fb(treasury, '2y_chg_bp')}）（来源：{_fs(treasury)}）")
     
-    # A50
-    a50 = ov.get("a50", {})
-    L.append(f"- 富时A50期货：{_fp(a50)}（{_fn(a50, 'close', 0, '')}）（来源：{_fs(a50)}）")
-    
     # 大宗商品（仅保留原油和黄金）
     oil_wti = ov.get("oil_wti", {})
     gold = ov.get("gold", {})
     L.append(f"- WTI原油：{_fp(oil_wti)}（{_fn(oil_wti, 'close', 2, '美元/桶')}）（来源：{_fs(oil_wti)}）")
     L.append(f"- 黄金：{_fp(gold)}（{_fn(gold, 'close', 2, '美元/盎司')}）（来源：{_fs(gold)}）")
     
-    # 汇率（仅保留离岸人民币）
+    # 汇率（仅保留在岸人民币）
     usd_cny = ov.get("usd_cny", {})
     L.append(f"- 在岸人民币(USD/CNY)：{_fn(usd_cny, 'rate', 4, '')}（来源：{_fs(usd_cny)}）")
     
@@ -114,7 +110,7 @@ def _facts_a_share_market(data: dict) -> list[str]:
     indices = eq.get("indices", {})
     L = ["【二、A股市场】"]
     
-    # 核心指数（移除北证50）
+    # 核心指数
     sh50 = indices.get("sh50", {})
     hs300 = indices.get("hs300", {})
     zz500 = indices.get("zz500", {})
@@ -129,24 +125,10 @@ def _facts_a_share_market(data: dict) -> list[str]:
     L.append(f"- 创业板指：{_fp(cyb)}（{_fn(cyb, 'close', 0, '点')}）（来源：{_fs(cyb)}）")
     L.append(f"- 科创50：{_fp(kc50)}（{_fn(kc50, 'close', 0, '点')}）（来源：{_fs(kc50)}）")
     
-    # 成交额
+    # 成交额（仅绝对值）
     tv = eq.get("turnover", {})
     vol = base.yuan_billion(tv.get("value")) if isinstance(tv, dict) else base.MISSING
-    chg = base.pct(tv.get("change_pct")) if isinstance(tv, dict) else base.MISSING
-    L.append(f"- 全市场成交额：{vol}（环比{chg}）（来源：{_fs(tv)}）")
-    
-    # 涨跌家数
-    ad = eq.get("advance_decline", {})
-    adv = ad.get("advancing") if isinstance(ad, dict) else None
-    dec = ad.get("declining") if isinstance(ad, dict) else None
-    unch = ad.get("unchanged") if isinstance(ad, dict) else None
-    limit_up = ad.get("limit_up") if isinstance(ad, dict) else None
-    limit_down = ad.get("limit_down") if isinstance(ad, dict) else None
-    
-    ad_txt = f"涨{adv}家/跌{dec}家/平{unch}家" if (adv is not None and dec is not None) else base.MISSING
-    limit_txt = f"涨停{limit_up}家/跌停{limit_down}家" if (limit_up is not None and limit_down is not None) else base.MISSING
-    L.append(f"- 涨跌家数：{ad_txt}（来源：{_fs(ad)}）")
-    L.append(f"- 涨跌停：{limit_txt}（来源：{_fs(ad)}）")
+    L.append(f"- 全市场成交额：{vol}（来源：{_fs(tv)}）")
     
     # 行业板块
     sectors = eq.get("sectors", [])
@@ -223,16 +205,10 @@ def _facts_bond(data: dict) -> list[str]:
 def _facts_convertible(data: dict) -> list[str]:
     """可转债数据事实。"""
     cb = data.get("convertible", {})
-    csi = cb.get("csi_index", {})
     avg_p = cb.get("avg_price")
-    avg_prem = cb.get("avg_premium")
-    pctile = cb.get("premium_percentile_3y")
     below = cb.get("below_par")
     L = ["【五、可转债】"]
-    L.append(f"- 中证转债指数：{_fp(csi)}（{_fn(csi, 'close', 0, '点')}）（来源：{_fs(csi)}）")
     L.append(f"- 全市场均价：{f'{avg_p:.2f}元' if avg_p is not None else base.MISSING}（来源：{cb.get('stats_source', '')}）")
-    L.append(f"- 平均转股溢价率：{f'{avg_prem:.1f}%' if avg_prem is not None else base.MISSING}")
-    L.append(f"- 溢价率近3年分位：{f'{pctile:.0f}%' if pctile is not None else base.MISSING}")
     L.append(f"- 破面只数：{f'{int(below)}只' if below is not None else base.MISSING}")
     L.append(f"- 成交额：{base.yuan_billion(cb.get('turnover'))}")
     
