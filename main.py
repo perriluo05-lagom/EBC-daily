@@ -162,8 +162,8 @@ def main() -> int:
             log.info("%s 非交易日,跳过推送。", report_date)
             return 0
 
-    # 数据基准日:最近一个已收盘的交易日(早8点未开盘,取前一交易日)
-    trade_date = cal.previous_trade_day(report_date)
+    # 数据基准日:最近一个已收盘的交易日(收盘后推送,取当天或之前最近的交易日)
+    trade_date = cal.latest_trade_day_on_or_before(report_date)
     log.info("报告日期=%s,数据基准日=%s, dry_run=%s", report_date, trade_date, args.dry_run)
 
     data = collect_all()

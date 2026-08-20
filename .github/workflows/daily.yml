@@ -2,8 +2,9 @@ name: EBC Daily 邮件推送
 
 on:
   schedule:
-    # UTC 00:00 周一至五 = 北京时间 08:00(GitHub cron 可能延迟 5-30 分钟)
-    - cron: '0 0 * * 1-5'
+    # UTC 10:00 周一至五 = 北京时间 18:00(GitHub cron 可能延迟 5-30 分钟)
+    # A股收盘后等待数据源更新完成再推送
+    - cron: '0 10 * * 1-5'
   workflow_dispatch:
     inputs:
       dry_run:
